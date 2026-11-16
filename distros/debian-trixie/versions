@@ -13,11 +13,12 @@ DISTRO_KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
 # Docker CE (download.docker.com) and its companions; how a pin moves is in
 # docs/build.md (Reproducibility). Docker CE 29.9.3 (2026-11-03, a security
 # release of the daemon and BuildKit); containerd.io 2.4.2-3 (2026-10-20,
-# rebuilt with Go 1.27.3); buildx 0.38.1 (2026-10-20, Go 1.26.10); compose
-# 5.7.0 (2026-11-02, x/net 0.60). Next: the first buildx build in Docker's
-# repository with go-archive 0.3.0 and x/net 0.60 (.trivyignore.yaml).
+# rebuilt with Go 1.27.3); buildx 0.39.0 (x/net 0.62; its go-archive is still
+# 0.2.0, as in every buildx release so far); compose 5.7.0 (2026-11-02, x/net
+# 0.60). Next: the first buildx build in Docker's repository with go-archive
+# 0.3.0, and the first compose build with x/net 0.62 (.trivyignore.yaml).
 DOCKER_MIRROR=https://download.docker.com/linux/debian
 DOCKER_CE_VERSION=5:29.9.3-1~debian.13~trixie
 CONTAINERD_VERSION=2.4.2-3~debian.13~trixie
-BUILDX_VERSION=0.38.1-1~debian.13~trixie
+BUILDX_VERSION=0.39.0-1~debian.13~trixie
 COMPOSE_VERSION=5.7.0-1~debian.13~trixie
