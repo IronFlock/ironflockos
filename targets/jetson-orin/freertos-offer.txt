@@ -1,0 +1,25 @@
+FreeRTOS in the boot firmware of this IronFlockOS image
+
+This image and its RAUC update bundle carry NVIDIA's boot firmware for Jetson
+Orin modules, unchanged, as UEFI capsules from NVIDIA's package
+nvidia-l4t-bootloader @L4T_PACKAGE_VERSION@ (Jetson Linux @L4T_VERSION@), in
+/opt/ota_package/t23x/. The firmware of the Safety Processing Engine (SPE) in
+these capsules contains FreeRTOS.
+
+The version of FreeRTOS used: FreeRTOS V8.1.2.
+
+FreeRTOS is licensed under the GNU General Public License version 2 with the
+FreeRTOS exception. Its text comes with the package, in
+/usr/share/doc/nvidia-l4t-bootloader/LICENSE.bl_update_payload.gz. NVIDIA's
+licence for the package, the NVIDIA Driver License Agreement, is
+/usr/share/doc/nvidia-l4t-bootloader/copyright.
+
+Offer of the source code: IronFlock provides the FreeRTOS source code of this
+firmware, with the modifications NVIDIA made, to everyone who receives this
+image or bundle. It is published with each IronFlockOS release for Jetson at
+
+  @DL_BASE@/ironflockos/sources/l4t-@L4T_VERSION@/
+
+in NVIDIA's public_sources.tbz2 of Jetson Linux @L4T_VERSION@ (the archives
+FreeRTOSV8.1.2_src.tbz2 and spe-freertos-bsp.tbz2), and IronFlock sends it on
+request.

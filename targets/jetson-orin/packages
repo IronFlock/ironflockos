@@ -1,10 +1,9 @@
 # Packages of the jetson-orin target (ADR-0008), on top of profiles/base.
 # The L4T packages of an Orin (the -nvgpu flavour; -openrm is Thor's) from
 # NVIDIA's repositories, at L4T_PACKAGE_VERSION / L4T_KERNEL_VERSION
-# (target.conf). Not here: nvidia-l4t-bootloader (QSPI payloads: lane 2,
-# WP-6.5), nvidia-l4t-extlinux (the build writes extlinux.conf),
-# nvidia-l4t-apt-source (the build writes the sources), nvidia-l4t-configs
-# (desktop and cloud-init settings).
+# (target.conf). Not here: nvidia-l4t-extlinux (the build writes
+# extlinux.conf), nvidia-l4t-apt-source (the build writes the sources),
+# nvidia-l4t-configs (desktop and cloud-init settings).
 
 # kernel 6.8 with NVIDIA's out-of-tree modules, device trees, initrd
 nvidia-l4t-kernel
@@ -26,6 +25,10 @@ nvidia-l4t-nvml
 
 # nvbootctrl (RAUC's backend tegra-rootfs-ab), tegrastats, power modes, fan
 nvidia-l4t-bootloader-utils
+# NVIDIA's QSPI boot firmware as UEFI capsules (/opt/ota_package/t23x), which
+# tegra-capsule stages with an OS update (lane 2, WP-6.5); its postinst does
+# nothing in the build (the preinstall marker of build/mkrootfs.sh)
+nvidia-l4t-bootloader
 nvidia-l4t-tools
 nvidia-l4t-nvpmodel
 nvidia-l4t-nvfancontrol

@@ -214,6 +214,14 @@ else
   # one boot, as on the EFI targets (tegra-slot-trial).
   if [ "$BOOTLOADER" = tegra ]; then
     systemctl --root="$ROOT" enable ironflockos-tegra-keep.timer
+    # Lane 2 (WP-6.5): the boot firmware capsule's result at every boot, and
+    # the platform's maintenance window, which lets an OS update write it.
+    systemctl --root="$ROOT" enable ironflockos-tegra-capsule.service
+    # The module's nv_boot_control.conf, from the ESP where the flash kit
+    # put it, for nvbootctrl and the capsule lane.
+    systemctl --root="$ROOT" enable ironflockos-tegra-board-conf.service
+    mkdir -p "$ROOT/etc/ironflockos"
+    ln -sfn /data/ironflockos/maintenance.conf "$ROOT/etc/ironflockos/maintenance.conf"
   fi
   if [ "$BOOTLOADER" = grub-efi ]; then
     systemctl --root="$ROOT" enable ironflockos-slot-proven.path ironflockos-slot-keep.timer
@@ -273,10 +281,11 @@ if [ "$VARIANT" = nvidia ]; then
 fi
 if [ "$BOOTLOADER" = tegra ]; then
   # NVIDIA's boot-time services stay off. nv-l4t-bootloader-config updates
-  # the QSPI firmware on its own (IronFlockOS's lane 2 does, WP-6.5) and
-  # runs `nvbootctrl verify` at every boot, which would end every trial of an
-  # updated slot before the device-agent has spoken (IronFlockOS's health
-  # gate verifies the boot instead, WP-6.3: tegra-rootfs-ab, tegra-slot-trial).
+  # the QSPI firmware on its own (IronFlockOS's lane 2 does, WP-6.5:
+  # tegra-capsule) and runs `nvbootctrl verify` at every boot, which would end
+  # every trial of an updated slot before the device-agent has spoken
+  # (IronFlockOS's health gate verifies the boot instead, WP-6.3:
+  # tegra-rootfs-ab, tegra-slot-trial).
   # nv-rootfs-validation-config, ordered before it, reboots for as long as
   # a validation script of the user fails, without a bound. NVIDIA puts the
   # units into /etc/systemd/system, where the mask goes: the files make way
@@ -290,6 +299,12 @@ if [ "$BOOTLOADER" = tegra ]; then
   [ -x "$ROOT/usr/sbin/nvbootctrl" ] || die "nvbootctrl is missing (nvidia-l4t-bootloader-utils)"
   systemctl --root="$ROOT" is-enabled ironflockos-tegra-keep.timer >/dev/null ||
     die "ironflockos-tegra-keep.timer is not enabled"
+  # NVIDIA's boot firmware capsules (nvidia-l4t-bootloader): in lock-step with
+  # the BSP pin, with the FreeRTOS statement and source offer (WP-6.5).
+  bash "$here/tegra-capsules.sh" "$ROOT"
+  for unit in ironflockos-tegra-capsule.service ironflockos-tegra-board-conf.service; do
+    systemctl --root="$ROOT" is-enabled "$unit" >/dev/null || die "$unit is not enabled"
+  done
 fi
 
 # --- IronFlock: the agent and the host defaults, by ironflock bake -------

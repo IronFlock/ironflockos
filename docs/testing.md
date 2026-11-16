@@ -46,8 +46,8 @@ profile has to meet. The trusted CAs (`ca.bats`) run against folders that
 stand for the IRONFLOCKOS partition, `/data` and the trust store, with a fake
 `update-ca-certificates` and certificates that `openssl` makes. The RAUC
 backends of the Raspberry Pi (`rpi-tryboot.bats`) and of Jetson
-(`tegra-rootfs-ab.bats`, with its health gate) run against fakes of the
-firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
+(`tegra-rootfs-ab.bats`, with its health gate; `tegra-capsule.bats`, its boot
+firmware lane) run against fakes of the firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
 checks"). They need bash, bats and openssl only:
 
 ```sh
@@ -499,12 +499,46 @@ packages at the pinned versions, the Ubuntu, Docker and NVIDIA sources with
 the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 `nvbootctrl` and the health gate's timer, units and masks (NVIDIA's
 `nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
-agent and Docker's `nvidia` runtime. It also runs the tree's binaries in a
-chroot, the backend among them (`docs/targets/jetson-orin.md`). It needs root
-and an arm64 host. The `jetson-flash` job then makes the flash package from
-the image with NVIDIA's tools on an x86_64 runner
-(`build/tegra-flash-package.sh`): the dry run that the layout and the slot
-images pass the BSP's checks.
+agent and Docker's `nvidia` runtime, and the boot firmware lane: NVIDIA's
+capsules in `/opt/ota_package/t23x` unchanged against the package's
+checksums, the FreeRTOS statement, NVIDIA's licence texts, `tegra-capsule`,
+its report unit and the maintenance window's link. It also runs the tree's
+binaries in a chroot, the backend, `tegra-capsule` and `tegra-board-conf`
+among them
+(`docs/targets/jetson-orin.md`). Given the bundle as a second argument, as CI
+does, it mounts the bundle and checks with `debugfs` that its `rootfs.ext4`
+carries the capsules, the statement and `tegra-capsule`. It needs root and an
+arm64 host. The `jetson-flash` job then packs the flash kit
+(`build/jetson-flash-kit.sh`, the artifact `jetson-flash-kit`) and runs it
+from its archive on an x86_64 runner, with `--no-flash`, as far as it goes
+without a module: NVIDIA's Agreement downloaded from NVIDIA and checked
+against its pin, accepted with `--accept-nvidia-license`; the slot image just
+built, against its SHA-256; the BSP from the cache, checked before it is
+unpacked; NVIDIA's host prerequisites; the flash package made with NVIDIA's
+tools offline for an Orin Nano 8GB (`build/tegra-flash-package.sh`: the QSPI
+images and the NVMe's, both with rootfs A/B, the layout and the slot images
+through the BSP's checks); a test `.flock` put on the package's ESP and read
+back; and, in a step of its own, the package without the `.flock` at the end.
+Only `l4t_initrd_flash.sh --flash-only`, the flash itself, is left for a
+module ("Flashing a module" in `docs/targets/jetson-orin.md` lists what only
+a module proves).
+
+The kit's own logic is covered by `test/unit/jetson-flash-kit.bats`, with
+NVIDIA's BSP and Agreement as fakes served from `file://` URLs: an unknown
+board is refused with the list of the known ones; without acceptance nothing
+of NVIDIA's is downloaded or unpacked; an Agreement, a BSP or a slot image
+that is not the pinned one stops it before anything is unpacked; the release
+catalog's signature is checked with a throwaway Ed25519 key, and another
+signature or a missing release is refused; a file that is not a device's
+`.flock` is refused before anything is fetched; the `.flock` goes onto a fake
+ESP image with the flash index's SHA-1 updated, comes off again byte for
+byte, and an ESP the script does not know is left alone (with the real
+mtools, where installed, on a FAT image too); `flash.sh`'s
+`nv_boot_control.conf` goes onto the ESP beside it and comes off with it, and
+a file that is not of its shape is refused before the ESP is touched; and the
+archive holds exactly
+IronFlockOS's files, the same bytes each time, and runs unpacked.
+`fetch-bsp.bats` covers the Agreement's download on its own pins.
 
 The backend's logic is covered by `test/unit/tegra-rootfs-ab.bats`: every
 command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
@@ -512,8 +546,25 @@ command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
 nobody has recorded them on a module yet) and fake efivarfs files, and the
 update cases (marked good, never marked good and restarted, a cold restart
 during the trial, does not boot, no slot known good, no `/data`) against a
-model of NVIDIA's firmware that counts boots as its source does. The A/B switch and the forced fallback on a module
-are the hardware checklist (WP-6.6).
+model of NVIDIA's firmware that counts boots as its source does.
+`test/unit/tegra-capsule.bats` covers the boot firmware lane: `tegra-capsule
+stage` in every case (the chain already right, an older chain of the same
+generation without a window or without a capsule to stage, which switches
+without it, each reason it refuses, the
+window file's parsing, the bytes of `OsIndications` and the platform spec
+variables, the capsule's name and place on a fake ESP, the board's capsule by
+the firmware's spec rule), `withdraw` and `pending`, the backend with a
+staged capsule, an update through a model of the firmware that applies the
+capsule (and switches chain and slot) or rejects it, `report`, and
+`build/tegra-capsules.sh` against trees with fake FMP capsules (lock-step,
+missing capsules, a file that is no capsule, the package's version), the
+report's `firmware-behind`, and
+`tegra-board-conf`, which copies the module's `nv_boot_control.conf` from a
+fake ESP to `/etc` (none there, another one, one that is not NVIDIA's, none
+on the ESP, `/etc` not writable: never a failure). The fake
+capsules carry only NVIDIA's board spec strings and an FMP header; nothing of
+NVIDIA's is in the repository. The A/B switch, the forced fallback and a
+capsule update on a module are the hardware checklist (WP-6.6).
 
 Both jobs run on every pull request when the repository variable `JETSON_CI`
 is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs

@@ -33,8 +33,9 @@ texts were read from the files NVIDIA ships, not from summaries.
 |----------|----------------|---------|-------|
 | Slot image `<image-id>-<version>.rootfs.ext4.zst` and bundle `.raucb` | The `nvidia-l4t-*` packages the target lists and their dependencies, and the container toolkit, installed by dpkg from NVIDIA's repositories | Download server `ironflockos/<version>/`, appliance OS mirror, FlockFlasher, the device-agent | Built in CI (WP-6.2) |
 | Flash package | Bootloader binaries, BCTs and partition images that NVIDIA's tools make from the BSP; NVIDIA's host flash tools; two NVIDIA scripts with IronFlockOS's `-r` fix; the layout `build/tegra-layout.py` makes from NVIDIA's XML | Planned for the release matrix (WP-6.4) | Built in CI, not published |
+| Flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` | None: IronFlockOS's scripts, which download the BSP and the Agreement from NVIDIA on the user's host (point 4) | Download server `ironflockos/<version>/`, with the first Jetson release | Built in CI (WP-6.4), not published |
 | Orin Nano SD image | The same for an SD card: kernel, DTB, ESP with L4TLauncher, recovery | FlockFlasher (WP-6.4) | Planned |
-| QSPI capsule `TEGRA_BL.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule | Inside the bundle (WP-6.5) | Planned |
+| QSPI capsules `TEGRA_BL_*.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule per carrier board, NVIDIA's own from `nvidia-l4t-bootloader` | In the slot image and the bundle (`/opt/ota_package/t23x`, WP-6.5) | Built in CI (WP-6.5) |
 | Repository | `targets/jetson-orin/apt/jetson-ota-public.asc`, NVIDIA's key file with the header `LicenseRef-NvidiaProprietary` | GitHub, public, Apache-2.0 | Now |
 
 IronFlockOS does not distribute NVIDIA's sample root filesystem (ADR-0008). It also does not
@@ -94,8 +95,8 @@ uses Canonical's binaries from `ports.ubuntu.com`.
 
 1. **NVIDIA's packages stay unchanged.** dpkg installs them from NVIDIA's repositories at
    the pinned version. The build changes none of their files. It writes its own
-   `extlinux.conf`, masks two of NVIDIA's units, and leaves out `nvidia-l4t-bootloader`,
-   `-extlinux`, `-apt-source` and `-configs` (target notes). The build excludes no
+   `extlinux.conf`, masks two of NVIDIA's units, and leaves out `nvidia-l4t-extlinux`,
+   `-apt-source` and `-configs` (target notes). The build excludes no
    documentation, so `/usr/share/doc/nvidia-l4t-*` keeps the Agreement and the notices.
    A check in `test/image/jetson-rootfs-check.sh` makes this a rule: every installed
    `nvidia-l4t-*` package has its `copyright` file (WP-6.8).
@@ -116,7 +117,12 @@ uses Canonical's binaries from `ports.ubuntu.com`.
    slot image. The user gets the BSP from NVIDIA under the Agreement. IronFlockOS then
    distributes no NVIDIA-made bootloader images, no changed NVIDIA scripts and no
    derived layout. IronFlockOS publishes the package itself only if legal answers
-   questions 1 and 2 with yes (WP-6.4).
+   questions 1 and 2 with yes (WP-6.4). As built (WP-6.4): the kit also downloads the
+   Agreement from NVIDIA (`Tegra_Software_License_Agreement-Tegra-Linux.txt` next to the
+   BSP, pinned by SHA-256 in `bsp.conf` and checked against NVIDIA's SHA-1 list), shows it
+   and asks for acceptance before it unpacks or runs anything of NVIDIA's;
+   `--accept-nvidia-license` accepts it without the question and still prints it
+   (question 3). The kit holds no file of NVIDIA's.
 5. **The Orin Nano SD image waits for question 1.** It holds partition images that
    NVIDIA's tools make. If the answer is no, the developer kit also uses the flash kit
    (WP-6.4).
@@ -128,6 +134,11 @@ uses Canonical's binaries from `ports.ubuntu.com`.
    `l4t_generate_soc_capsule.sh` makes capsules only for carriers NVIDIA ships none for,
    and only after legal answers question 1 with yes. The bundle carries the FreeRTOS
    statement: version 8.1.2, and the offer that points at the source mirror (WP-6.5).
+   As built: `nvidia-l4t-bootloader` is installed in the image, so the capsules reach
+   the bundle with the package's own `copyright` (the Agreement) and
+   `LICENSE.bl_update_payload.gz` (the FreeRTOS licence); the build writes the
+   statement to `/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt` and fails when a
+   capsule's version is not the BSP pin's (`build/tegra-capsules.sh`).
 7. **The repository holds no file under NVIDIA's licence.** NVIDIA's layout files stay
    out already. `jetson-ota-public.asc` is replaced with the key as NVIDIA serves it at
    `https://repo.download.nvidia.com/jetson/jetson-ota-public.asc`. That file has the
@@ -150,10 +161,10 @@ written permission.
 |---|----------|-------|
 | 1 | Are images that NVIDIA's own tools make from unchanged BSP binaries "binary files not modified" under 1.1(d)? This covers signed or packed binaries, BCTs, partition images and capsules | Flash kit only; no SD image; capsules only from `nvidia-l4t-bootloader` |
 | 2 | May IronFlockOS distribute two of NVIDIA's flash scripts with its `-r` fix, and a layout generated from NVIDIA's XML, if they carry change notices (1.1(b), 2.5)? | The flash kit applies the fix and makes the layout on the user's host, as CI does |
-| 3 | Is the Agreement next to the download, in FlockFlasher and in the image enough for "provided to each SOFTWARE recipient"? Does FlockFlasher need an acceptance step? What about devices that partners sell with IronFlockOS already installed? | FlockFlasher asks for acceptance; partners pass the Agreement on |
+| 3 | Is the Agreement next to the download, in FlockFlasher and in the image enough for "provided to each SOFTWARE recipient"? Does FlockFlasher need an acceptance step? What about devices that partners sell with IronFlockOS already installed? The flash kit asks for acceptance, and also takes `--accept-nvidia-license` for runs without a terminal: it still prints the Agreement in full, but nobody answers a question. Is that flag an acceptance by the recipient? | FlockFlasher asks for acceptance; partners pass the Agreement on; the kit drops the flag and always asks |
 | 4 | Does IronFlock accept the indemnity (2.11)? Do its customer terms pass the exclusion of Critical Applications (2.10) on for Jetson devices? | Customer terms change before the first Jetson release |
 | 5 | How are the Jetson images classified for export control (15)? NVIDIA's proprietary parts are not publicly available open source. Does the download server need restrictions for embargoed destinations? | Jetson files go behind the restriction the answer names |
-| 6 | Is the source mirror (point 3) enough for NVIDIA's GPL and LGPL parts? The same question applies to the Ubuntu and Debian packages of every IronFlockOS image | As legal sets |
+| 6 | Is the source mirror (point 3) enough for NVIDIA's GPL and LGPL parts? The same question applies to the Ubuntu and Debian packages of every IronFlockOS image. For FreeRTOS (point 6): the image's statement (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source at the mirror and says IronFlock sends it on request, without naming a contact. Does the offer need a postal or e-mail address, and whose? | As legal sets; the statement names the contact legal gives |
 | 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? | A licence from Canonical, or a userspace IronFlockOS builds itself |
 | 8 | The licence is revocable, and every Jetson device in the field depends on it. Does IronFlock accept that, or does it seek a written distribution agreement with NVIDIA, for example through NVIDIA's partner programme? | |
 

@@ -5,14 +5,16 @@
 # binaries run in a chroot (native on an arm64 host). The tree is what `just
 # rootfs jetson-orin base` leaves in IRONFLOCKOS_WORK; the boot and the A/B
 # switch are hardware checks once the flash package exists (WP-6.4, WP-6.6).
-#   sudo test/image/jetson-rootfs-check.sh ROOT
+# With BUNDLE, the RAUC bundle made from the tree is checked to carry the
+# boot firmware lane's files too (WP-6.5).
+#   sudo test/image/jetson-rootfs-check.sh ROOT [BUNDLE]
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 src=$(cd "$here/../.." && pwd)
 # shellcheck source=build/lib.sh
 . "$src/build/lib.sh"
-[ "$#" -eq 1 ] || {
-  echo "usage: jetson-rootfs-check.sh ROOT" >&2
+[ "$#" -eq 1 ] || [ "$#" -eq 2 ] || {
+  echo "usage: jetson-rootfs-check.sh ROOT [BUNDLE]" >&2
   exit 2
 }
 [ "$(id -u)" = 0 ] || {
@@ -28,11 +30,22 @@ root=$(cd "$1" && pwd)
   echo "jetson-rootfs-check: $root is not a root tree" >&2
   exit 2
 }
+bundle=""
+if [ "$#" -eq 2 ]; then
+  bundle=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+  [ -f "$bundle" ] || {
+    echo "jetson-rootfs-check: no bundle $2" >&2
+    exit 2
+  }
+fi
 load_conf "$src/targets/jetson-orin/target.conf"
+load_conf "$src/targets/jetson-orin/bsp.conf"
+bundle_mnt=""
 cleanup() {
-  for m in "$root/dev" "$root/proc"; do
+  for m in "$root/dev" "$root/proc" $bundle_mnt; do
     ! mountpoint -q "$m" || umount "$m"
   done
+  [ -z "$bundle_mnt" ] || rmdir "$bundle_mnt"
 }
 trap cleanup EXIT
 fails=0
@@ -55,7 +68,7 @@ check "os-release: ID_LIKE is Ubuntu's" grep -qx 'ID_LIKE="ubuntu debian"' "$osr
 check "the distribution is Ubuntu 24.04" grep -qx 'DISTRIB_CODENAME=noble' "$root/etc/lsb-release"
 
 # --- L4T at the pinned versions ---------------------------------------------
-for p in nvidia-l4t-core nvidia-l4t-init nvidia-l4t-cuda nvidia-l4t-firmware nvidia-l4t-tools nvidia-l4t-bootloader-utils; do
+for p in nvidia-l4t-core nvidia-l4t-init nvidia-l4t-cuda nvidia-l4t-firmware nvidia-l4t-tools nvidia-l4t-bootloader-utils nvidia-l4t-bootloader; do
   check "$p is $L4T_PACKAGE_VERSION" test "$(version_of "$p")" = "$L4T_PACKAGE_VERSION"
 done
 for p in nvidia-l4t-kernel nvidia-l4t-kernel-nvgpu nvidia-l4t-kernel-oot-modules nvidia-l4t-display-kernel; do
@@ -64,8 +77,8 @@ done
 check "nvidia-container-toolkit is $L4T_CONTAINER_TOOLKIT_VERSION" \
   test "$(version_of nvidia-container-toolkit)" = "$L4T_CONTAINER_TOOLKIT_VERSION"
 installed() { dpkg-query --admindir="$root/var/lib/dpkg" -W -f '${db:Status-Abbrev} ${Package}\n' "$@" 2>/dev/null | awk '$1 == "ii" { print $2 }'; }
-check "none of the L4T packages kept out (bootloader payloads, extlinux, desktop configs, apt source)" \
-  test -z "$(installed nvidia-l4t-bootloader nvidia-l4t-extlinux nvidia-l4t-configs nvidia-l4t-apt-source)"
+check "none of the L4T packages kept out (extlinux, desktop configs, apt source)" \
+  test -z "$(installed nvidia-l4t-extlinux nvidia-l4t-configs nvidia-l4t-apt-source)"
 check "no Ubuntu kernel next to NVIDIA's" test -z "$(installed 'linux-image-*')"
 check "the preinstall marker is gone" test ! -e "$root/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall"
 
@@ -127,6 +140,26 @@ check "tegra-slot-trial is executable" test -x "$root/usr/lib/ironflockos/tegra-
 check "ironflockos-tegra-keep.timer is enabled, and named in a preset for each slot's first boot" \
   bash -c "systemctl --root='$root' -q is-enabled ironflockos-tegra-keep.timer && grep -qx 'enable ironflockos-tegra-keep.timer' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
 
+# --- the boot firmware lane (WP-6.5) ----------------------------------------
+cap=$root/opt/ota_package/t23x
+check "NVIDIA's capsules for the Orin NX and Nano (TEGRA_BL_3767*) and the AGX Orin (TEGRA_BL_3701*), and L4TLauncher" \
+  bash -c "compgen -G '$cap/TEGRA_BL_3767*.Cap' && compgen -G '$cap/TEGRA_BL_3701*.Cap' && test -s '$cap/BOOTAA64.efi'"
+check "the capsules match the package's own checksums (unchanged)" \
+  bash -c "cd '$root' && grep ' opt/ota_package/t23x/' var/lib/dpkg/info/nvidia-l4t-bootloader.md5sums | md5sum -c --quiet"
+offer=$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
+check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION" \
+  bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -q '/ironflockos/sources/l4t-$L4T_VERSION/\$' '$offer'"
+check "NVIDIA's Agreement and FreeRTOS licence come with the package" \
+  bash -c "test -s '$root/usr/share/doc/nvidia-l4t-bootloader/copyright' && test -s '$root/usr/share/doc/nvidia-l4t-bootloader/LICENSE.bl_update_payload.gz'"
+check "tegra-capsule is executable, rauc-post-install stages with it and keeps nv_boot_control.conf" \
+  bash -c "test -x '$root/usr/lib/ironflockos/tegra-capsule' && grep -q 'capsule_tool\" stage' '$root/usr/lib/ironflockos/rauc-post-install' && grep -q '/etc/nv_boot_control.conf' '$root/usr/lib/ironflockos/rauc-post-install'"
+check "ironflockos-tegra-capsule.service is enabled, and named in the preset" \
+  bash -c "systemctl --root='$root' -q is-enabled ironflockos-tegra-capsule.service && grep -qx 'enable ironflockos-tegra-capsule.service' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
+check "tegra-board-conf takes the module's nv_boot_control.conf from the ESP at boot, and the image carries none of its own" \
+  bash -c "test -x '$root/usr/lib/ironflockos/tegra-board-conf' && systemctl --root='$root' -q is-enabled ironflockos-tegra-board-conf.service && grep -qx 'enable ironflockos-tegra-board-conf.service' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset' && test ! -e '$root/etc/nv_boot_control.conf'"
+check "the maintenance window is the device's, on /data" \
+  bash -c "[ \"\$(readlink '$root/etc/ironflockos/maintenance.conf')\" = /data/ironflockos/maintenance.conf ]"
+
 check "the agent is baked in" test -x "$root/usr/lib/ironflock/device-agent"
 check "ironflock is baked in as /usr/bin/ironflock" test -x "$root/usr/bin/ironflock"
 check "image.json names ironflock_version, not the init_version of ironflock-init" \
@@ -157,12 +190,32 @@ check "chroot: nvidia-container-cli runs" in_root /usr/bin/nvidia-container-cli 
 check "nvbootctrl is there (the RAUC backend's tool, WP-6.3)" test -x "$root/usr/sbin/nvbootctrl"
 check "chroot: the RAUC backend runs (and refuses an unknown command)" \
   bash -c "chroot '$root' /usr/lib/ironflockos/tegra-rootfs-ab frobnicate 2>&1 | grep -q 'unknown command'"
+check "chroot: tegra-capsule runs (and refuses an unknown command)" \
+  bash -c "chroot '$root' /usr/lib/ironflockos/tegra-capsule frobnicate 2>&1 | grep -q 'unknown command'"
+check "chroot: tegra-board-conf runs, and without the ESP's file changes nothing" \
+  bash -c "chroot '$root' /usr/lib/ironflockos/tegra-board-conf | grep -q 'no nv_boot_control.conf on the ESP' && test ! -e '$root/etc/nv_boot_control.conf'"
 check "chroot: the linker finds libnvidia-ml" bash -c "chroot '$root' ldconfig -p | grep -q 'libnvidia-ml.so.1 '"
 # libcuda of both GPU flavours is under /opt/nvidia/l4t-gpu-libs; NVIDIA's
 # nv-load-gpu-libs links the board's (nvgpu on Orin) into the linker's path
 # and the container CSVs on each boot.
 check "Orin's libcuda (nvgpu flavour)" test -f "$root/opt/nvidia/l4t-gpu-libs/nvgpu/libcuda.so.1.1"
 check "nv-load-gpu-libs links it on boot" systemctl --root="$root" -q is-enabled nv-load-gpu-libs.service
+
+# --- the bundle carries the same (WP-6.5) --------------------------------------
+if [ -n "$bundle" ]; then
+  bundle_mnt=$(mktemp -d)
+  if mount -t squashfs -o loop,ro "$bundle" "$bundle_mnt"; then
+    img=$bundle_mnt/rootfs.ext4
+    check "the bundle's rootfs.ext4 carries NVIDIA's capsules and L4TLauncher" \
+      bash -c "debugfs -R 'ls /opt/ota_package/t23x' '$img' 2>/dev/null | tr -s ' ' '\n' | grep -qE '^TEGRA_BL_3767.*\.Cap\$' && debugfs -R 'ls /opt/ota_package/t23x' '$img' 2>/dev/null | grep -q TEGRA_BL_3701 && debugfs -R 'ls /opt/ota_package/t23x' '$img' 2>/dev/null | grep -q BOOTAA64.efi"
+    check "the bundle's rootfs.ext4 carries the FreeRTOS statement and NVIDIA's licence texts" \
+      bash -c "debugfs -R 'cat /usr/share/doc/ironflockos/FreeRTOS-source-offer.txt' '$img' 2>/dev/null | grep -q 'FreeRTOS V8.1.2' && debugfs -R 'ls /usr/share/doc/nvidia-l4t-bootloader' '$img' 2>/dev/null | grep -q LICENSE.bl_update_payload.gz"
+    check "the bundle's rootfs.ext4 carries tegra-capsule, and its capsule is the tree's" \
+      bash -c "debugfs -R 'stat /usr/lib/ironflockos/tegra-capsule' '$img' >/dev/null 2>&1 && cmp <(debugfs -R 'cat /opt/ota_package/t23x/TEGRA_BL_3767.Cap' '$img' 2>/dev/null) '$root/opt/ota_package/t23x/TEGRA_BL_3767.Cap'"
+  else
+    bad "the bundle's squashfs mounts"
+  fi
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then

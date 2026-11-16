@@ -195,6 +195,25 @@ slot one boot, as GRUB does: when it starts a second time without the agent's
 mark, it is marked bad two minutes in and the device restarts into the old slot
 ([jetson-orin.md](targets/jetson-orin.md#ab-with-nvbootctrl)).
 
+Boot firmware that an OS release depends on travels inside its bundle (lane 2
+of [ADR-0007](adr/0007-update-mechanism-rauc-and-firmware-lanes.md)). On
+Jetson that is NVIDIA's own UEFI capsule of the QSPI firmware, from
+`nvidia-l4t-bootloader` in the image (`build/tegra-capsules.sh` checks at
+build time that it is the BSP pin's L4T release, and writes the FreeRTOS
+statement it needs). With an update, `rauc-post-install` has
+`tegra-capsule` stage it on the ESP when the boot chain of the slot just
+written has another release, and the capsule's reboot switches the slot. It
+does so only inside the platform's maintenance window, a device setting:
+`/etc/ironflockos/maintenance.conf`, which links to
+`/data/ironflockos/maintenance.conf` (`boot-firmware=yes`, optionally
+`until=<seconds since 1970>`; no file: closed). Without the window an update
+to a newer release of the same L4T generation (39.2.x) goes ahead and runs on
+the older firmware until an OS update inside a window brings it; one that
+needs another generation's firmware fails and the device stays on its slot;
+an update that needs no new firmware does not look at it
+([jetson-orin.md](targets/jetson-orin.md#boot-firmware-updates)). The Pi's
+EEPROM lane is WP-5.3; PCs have none.
+
 `IRONFLOCKOS_CMDLINE` in `grubenv` appends kernel parameters on both slots, for
 diagnosis in the field (`grub-editenv /boot/efi/EFI/BOOT/grubenv set
 IRONFLOCKOS_CMDLINE=...`) and for the QEMU tests. `IRONFLOCKOS_BOOT=text`

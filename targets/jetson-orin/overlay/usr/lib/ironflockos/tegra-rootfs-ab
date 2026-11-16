@@ -36,17 +36,26 @@
 #   fallback from two unbootable slots is the recovery kernel, from which the
 #   device does not come online.
 #
+# - When rauc-post-install has staged NVIDIA's capsule for the slot just
+#   written (tegra-capsule, WP-6.5), the capsule switches the boot chain, and
+#   with it the root slot: set-primary does not set the active slot through
+#   nvbootctrl (the firmware would cancel the capsule and the switch alike),
+#   and get-primary names the slot the capsule goes to. set-state bad of the
+#   other slot and set-primary of the running slot withdraw the capsule.
+#
 # Slot states live on /data, beside RAUC's own (good, bad, trying, and the
 # slot on trial). The running slot is always good.
 #
 # IRONFLOCKOS_NVBOOTCTRL, IRONFLOCKOS_EFIVARS, IRONFLOCKOS_CHATTR,
-# IRONFLOCKOS_TEGRA_AB_STATE and IRONFLOCKOS_PROC_CMDLINE: for the unit tests.
+# IRONFLOCKOS_TEGRA_AB_STATE, IRONFLOCKOS_PROC_CMDLINE and
+# IRONFLOCKOS_TEGRA_CAPSULE: for the unit tests.
 set -euo pipefail
 nvbootctrl=${IRONFLOCKOS_NVBOOTCTRL:-/usr/sbin/nvbootctrl}
 efivars=${IRONFLOCKOS_EFIVARS:-/sys/firmware/efi/efivars}
 chattr=${IRONFLOCKOS_CHATTR:-chattr}
 state_file=${IRONFLOCKOS_TEGRA_AB_STATE:-/data/rauc/ironflockos-tegra-rootfs-ab.state}
 cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+capsule_tool=${IRONFLOCKOS_TEGRA_CAPSULE:-/usr/lib/ironflockos/tegra-capsule}
 # NVIDIA's public variable GUID (gNVIDIAPublicVariableGuid).
 nvidia_guid=781e084c-a330-417c-b678-38e696380cb9
 
@@ -182,6 +191,14 @@ end_trial() {
   fi
 }
 
+# capsule_pending SLOT: a capsule staged in this boot switches to SLOT.
+capsule_pending() { [ -x "$capsule_tool" ] && "$capsule_tool" pending "$1"; }
+# withdraw_capsule: no capsule switches at the next restart.
+withdraw_capsule() {
+  [ -x "$capsule_tool" ] || return 0
+  "$capsule_tool" withdraw >&2 || die "a staged capsule could not be withdrawn"
+}
+
 # known_good SLOT: SLOT has been marked good while it ran, and the firmware
 # has not given up on it since.
 known_good() { [ "$(state_get "$1")" = good ] && [ "$(status_of "$1")" = normal ]; }
@@ -192,8 +209,20 @@ set_primary() {
   other=$(other_of "$cur")
   if [ "$1" = "$cur" ]; then
     # The running slot boots next: drop a switch to the other slot.
+    withdraw_capsule
     [ "$act" = "$cur" ] || set_active "$cur"
     end_trial "$other"
+  elif capsule_pending "$1"; then
+    # The capsule writes the slot's boot chain and makes it the active one,
+    # which boots the slot: the slot is made bootable, and nothing else may
+    # ask for a switch of the chain.
+    set_status "$1" normal
+    [ "$act" = "$cur" ] || set_active "$cur"
+    state_set "$cur" good
+    state_set "$1" trying
+    state_set trial "$1"
+    state_set trial-boots 0
+    echo "tegra-rootfs-ab: slot $1 boots next, through the capsule staged for its boot chain" >&2
   else
     # The other slot boots next, on trial. The firmware takes it only when
     # it is not unbootable; if the switch fails, it is unbootable again.
@@ -242,7 +271,8 @@ set_state() {
         # RAUC is about to write this slot, or gives up on it: the next boot
         # is the running slot's, and the firmware must not fall back to it
         # either (as NVIDIA's own update engine does before it writes a
-        # slot).
+        # slot). A capsule staged for it goes too.
+        withdraw_capsule
         [ "$act" = "$cur" ] || set_active "$cur"
         state_set "$1" bad
         end_trial "$1"
@@ -262,7 +292,11 @@ case "$cmd" in
   get-primary)
     want_args 0 "" "$@"
     load
-    echo "$act"
+    if [ "$act" = "$cur" ] && capsule_pending "$(other_of "$cur")"; then
+      other_of "$cur"
+    else
+      echo "$act"
+    fi
     ;;
   set-primary)
     want_args 1 SLOT "$@"

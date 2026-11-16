@@ -365,6 +365,23 @@ The pool gives both identities to runs on `v*` tags. Nothing else of
   Since [ADR-0019](adr/0019-every-test-runs-before-the-merge.md) it would
   have to run before the merge, where no bundle of the release carries the
   release signature and no catalog names it; how is open.
+- **The Jetson flash kit.** CI packs it on every pull request
+  (`ironflockos-jetson-flash-kit-<version>.tar.gz`, `build/jetson-flash-kit.sh`,
+  the artifact `jetson-flash-kit` of `ci.yml`'s `jetson-flash`), but no
+  release publishes it: it flashes the release's Jetson slot image, and no
+  Jetson file is published before the legal sign-off (ADR-0008, WP-6.8),
+  and the kit is of no use without the release's slot image. What the
+  sign-off then needs, with the Jetson image joining `build.yml`'s matrix:
+  the image's build packs the kit next to the image
+  (`build/jetson-flash-kit.sh out/ironflockos-jetson-orin-base <version>`),
+  and `files` in `build/publish.sh` adds `*.rootfs.ext4.zst` and
+  `ironflockos-jetson-flash-kit-*.tar.gz`. Both are then staged and
+  promoted to `ironflockos/<version>/` like every other file, named in
+  `SHA256SUMS`, next to `NVIDIA-LICENSE.txt`. The catalog names the slot
+  image (the kit checks it there) but not the kit, which is no image. The
+  kit holds nothing of NVIDIA's (licence review, points 4 and 7). The flash
+  package itself is never published unless legal answers the review's
+  questions 1 and 2 with yes.
 - **The source code of Jetson images.** `build/sources.sh` knows Debian and the
   Raspberry Pi archive, not Ubuntu or NVIDIA's L4T repositories. Jetson's
   sources (Ubuntu's source packages, NVIDIA's `public_sources.tbz2`) come with

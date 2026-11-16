@@ -1,0 +1,583 @@
+#!/usr/bin/env bash
+# Lane 2 on Jetson: NVIDIA's QSPI boot firmware travels with the OS release
+# as NVIDIA's own UEFI capsule (WP-6.5; ADR-0007; docs/targets/jetson-orin.md,
+# "Boot firmware updates").
+#
+#   tegra-capsule stage SLOT ROOT  rauc-post-install, after RAUC has written
+#                                  root slot SLOT (A or B), mounted at ROOT
+#   tegra-capsule pending SLOT     exit 0 if a capsule staged in this boot
+#                                  switches to SLOT (tegra-rootfs-ab)
+#   tegra-capsule withdraw         no capsule is pending any more
+#                                  (tegra-rootfs-ab)
+#   tegra-capsule report           at boot: what the last capsule did, the
+#                                  firmware versions of both boot chains,
+#                                  and whether the running slot's firmware
+#                                  is behind its release
+#
+# With rootfs A/B (RootfsRedundancyLevel 1) a root slot always boots with the
+# firmware boot chain of the same letter. A capsule writes the chain that does
+# not run, and on success makes it the active chain: that switches the root
+# slot on the same reboot. So the firmware of the chain of slot X must be the
+# L4T release slot X was built for (the lock-step rule), and the capsule is
+# needed exactly when the chain of the slot just written has another version.
+#
+# stage:
+# - the chain of SLOT already has the new slot's L4T version: nothing to do,
+#   RAUC switches the slot as usual (nvbootctrl);
+# - else the capsule for this board, from the new slot's own
+#   nvidia-l4t-bootloader (/opt/ota_package/t23x), goes to EFI/UpdateCapsule/
+#   on the ESP with its own name, NVIDIA's L4TLauncher next to it to
+#   EFI/BOOT/, and OsIndications gets bit 2 (file capsule delivery), as
+#   NVIDIA's nv_bootloader_capsule_updater.sh writes it. The capsule then
+#   does the switch: tegra-rootfs-ab does not set BootChainFwNext, which would
+#   make the firmware cancel both (BootChainDxe's CheckAndCancelUpdate);
+# - if the capsule is needed and cannot be staged (no maintenance window, no
+#   capsule for this board, no ESP or too little room on it, no efivarfs):
+#   within one L4T generation (the same release and major number, 39.2.x)
+#   and on older firmware, the slot is switched to without it, as an update
+#   without new firmware is, and runs on the older firmware until an OS
+#   update inside a window brings it up (if it does not boot, WP-6.3's
+#   fallback takes the device back after three tries); across generations,
+#   or with the chain's firmware unknown or failed, it refuses;
+# - it always refuses a downgrade of the firmware, a capsule older than the
+#   ESRT's lowest supported version, another L4T release (R36 to R39: a
+#   flash), and a slot without /etc/nv_tegra_release. Refusing fails RAUC's
+#   install: the device stays on the slot that runs.
+#
+# The maintenance window is a device setting from the platform:
+# /etc/ironflockos/maintenance.conf (-> /data/ironflockos/maintenance.conf),
+# KEY=value lines; # starts a comment:
+#   boot-firmware=yes|no   yes: an OS update may update the boot firmware;
+#                          no (default, and without the file)
+#   until=SECONDS          optional: the window ends at this time, in seconds
+#                          since 1970-01-01 UTC
+# A file this script does not understand keeps the window closed.
+#
+# IRONFLOCKOS_EFIVARS, IRONFLOCKOS_ESRT, IRONFLOCKOS_ESP, IRONFLOCKOS_ESP_FREE_KB,
+# IRONFLOCKOS_BOOT_CTRL_CONF, IRONFLOCKOS_MAINTENANCE_CONF,
+# IRONFLOCKOS_TEGRA_AB_STATE, IRONFLOCKOS_BOOT_ID, IRONFLOCKOS_CHATTR,
+# IRONFLOCKOS_NVBOOTCTRL, IRONFLOCKOS_RAUC, IRONFLOCKOS_RUN, IRONFLOCKOS_NOW,
+# IRONFLOCKOS_PROC_CMDLINE and IRONFLOCKOS_ROOT (the running tree): for the
+# unit tests.
+set -euo pipefail
+export LC_ALL=C
+efivars=${IRONFLOCKOS_EFIVARS:-/sys/firmware/efi/efivars}
+esrt=${IRONFLOCKOS_ESRT:-/sys/firmware/efi/esrt}
+esp=${IRONFLOCKOS_ESP:-/boot/efi}
+boot_ctrl=${IRONFLOCKOS_BOOT_CTRL_CONF:-/etc/nv_boot_control.conf}
+window=${IRONFLOCKOS_MAINTENANCE_CONF:-/etc/ironflockos/maintenance.conf}
+state_file=${IRONFLOCKOS_TEGRA_AB_STATE:-/data/rauc/ironflockos-tegra-rootfs-ab.state}
+boot_id_file=${IRONFLOCKOS_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+chattr=${IRONFLOCKOS_CHATTR:-chattr}
+nvbootctrl=${IRONFLOCKOS_NVBOOTCTRL:-/usr/sbin/nvbootctrl}
+rauc=${IRONFLOCKOS_RAUC:-rauc}
+run=${IRONFLOCKOS_RUN:-/run/ironflockos}
+cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+# NVIDIA's public variable GUID and the UEFI global variable GUID.
+nvidia_guid=781e084c-a330-417c-b678-38e696380cb9
+global_guid=8be4df61-93ca-11d2-aa0d-00e098032b8c
+capsules=opt/ota_package/t23x
+# Room left on the ESP besides the capsule and L4TLauncher.
+esp_margin_kb=1024
+
+say() { echo "tegra-capsule: $*"; }
+refuse() {
+  echo "tegra-capsule: $*" >&2
+  exit 1
+}
+
+# --- versions: NVIDIA's 0xRRRRMMmm (39.2.1 = 0x270201) -------------------------
+ver_num() { # ver_num 39.2.1
+  local r m n
+  IFS=. read -r r m n <<<"$1"
+  echo $(((r << 16) | (m << 8) | n))
+}
+ver_str() { # ver_str 2556417, or "unknown"
+  case "${1:-}" in
+    '' | *[!0-9]*) echo unknown ;;
+    *) echo "$(($1 >> 16)).$((($1 >> 8) & 255)).$(($1 & 255))" ;;
+  esac
+}
+# slot_l4t ROOT: the L4T release of the tree (nvidia-l4t-core's
+# /etc/nv_tegra_release: "# R39 (release), REVISION: 2.1, ...").
+slot_l4t() {
+  local first
+  [ -r "$1/etc/nv_tegra_release" ] || return 1
+  first=$(head -n 1 "$1/etc/nv_tegra_release")
+  [[ "$first" =~ ^#\ R([0-9]+)\ \(release\),\ REVISION:\ ([0-9]+)\.([0-9]+), ]] || return 1
+  echo "${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+}
+
+# --- EFI variables (efivarfs: 4 bytes of attributes, then the data) ---------
+var_path() { echo "$efivars/$1-$2"; }
+# var_write NAME GUID PRINTF-BYTES: written in one go, read back.
+var_write() {
+  local var tmp
+  var=$(var_path "$1" "$2")
+  tmp=$(mktemp)
+  # shellcheck disable=SC2059 # the format is the variable's bytes
+  printf "$3" >"$tmp"
+  [ ! -e "$var" ] || "$chattr" -i "$var" 2>/dev/null || true
+  if ! dd if="$tmp" of="$var" bs="$(wc -c <"$tmp" | tr -d ' ')" count=1 2>/dev/null || ! cmp -s "$tmp" "$var"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+}
+var_delete() {
+  local var
+  var=$(var_path "$1" "$2")
+  [ -e "$var" ] || return 0
+  "$chattr" -i "$var" 2>/dev/null || true
+  rm -f "$var"
+  [ ! -e "$var" ]
+}
+# var_u32 NAME GUID: the variable's UINT32, or nothing.
+var_u32() {
+  local var
+  var=$(var_path "$1" "$2")
+  [ -r "$var" ] || return 0
+  od -An -tu4 -j4 -N4 "$var" 2>/dev/null | tr -d ' \n'
+}
+# os_indications: the low 32 bits of OsIndications, or nothing.
+os_indications() { var_u32 OsIndications "$global_guid"; }
+# Bit 2 of OsIndications: EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED.
+# NVIDIA's updater writes the whole UINT64 as 4, with attributes 7.
+set_capsule_bit() { var_write OsIndications "$global_guid" '\x07\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00'; }
+clear_capsule_bit() {
+  local v
+  v=$(os_indications)
+  [ -n "$v" ] && [ $((v & 4)) -ne 0 ] || return 0
+  v=$((v & ~4))
+  var_write OsIndications "$global_guid" "$(printf '\\x07\\x00\\x00\\x00\\x%02x\\x%02x\\x%02x\\x%02x\\x00\\x00\\x00\\x00' \
+    $((v & 255)) $(((v >> 8) & 255)) $(((v >> 16) & 255)) $(((v >> 24) & 255)))"
+}
+
+# chain_versions: fw_A and fw_B, the firmware versions of both boot chains
+# as the firmware reads them from their VER partitions at every boot
+# (SystemFwVersions: UINT32 A, UINT32 B; MAX_UINT32 when unreadable). Empty
+# when unknown.
+fw_A="" fw_B=""
+chain_versions() {
+  local var a b
+  var=$(var_path SystemFwVersions "$nvidia_guid")
+  fw_A="" fw_B=""
+  [ -r "$var" ] && [ "$(wc -c <"$var" | tr -d ' ')" -ge 12 ] || return 0
+  read -r a b < <(od -An -tu4 -j4 -N8 "$var")
+  [ "$a" = 4294967295 ] || fw_A=$a
+  [ "$b" = 4294967295 ] || fw_B=$b
+}
+fw_of() { if [ "$1" = A ]; then echo "$fw_A"; else echo "$fw_B"; fi; }
+# chain_failed SLOT: nvbootctrl reports that bootloader slot as not normal
+# (a capsule whose writes failed leaves it so). Unknown counts as not failed:
+# the firmware refuses to switch to a failed chain anyway.
+chain_failed() {
+  local out idx status
+  [ -x "$nvbootctrl" ] || return 1
+  out=$("$nvbootctrl" dump-slots-info 2>/dev/null) || return 1
+  idx=0
+  [ "$1" = A ] || idx=1
+  status=$(printf '%s\n' "$out" | sed -En "s/^slot: $idx, +status: ([a-z]+)\$/\\1/p" | head -n 1)
+  [ -n "$status" ] && [ "$status" != normal ]
+}
+
+# --- the backend's state on /data ---------------------------------------------
+state_get() {
+  [ -r "$state_file" ] || return 0
+  sed -n "s/^$1=//p" "$state_file" | tail -n 1
+}
+state_set() { # state_set KEY [VALUE]: without VALUE the key goes.
+  local tmp="$state_file.new"
+  mkdir -p "$(dirname "$state_file")"
+  { [ -r "$state_file" ] && grep -v "^$1=" "$state_file" || true; } >"$tmp"
+  [ "$#" -lt 2 ] || echo "$1=$2" >>"$tmp"
+  mv "$tmp" "$state_file"
+}
+boot_id() { cat "$boot_id_file" 2>/dev/null || true; }
+
+# --- the maintenance window ---------------------------------------------------
+# window_closed: prints why the window is closed; fails (returns 1) when open.
+window_closed() {
+  local n=0 line key value fw="" until="" now
+  if [ ! -e "$window" ]; then
+    echo "no maintenance window is open ($window does not exist)"
+    return 0
+  fi
+  if [ ! -f "$window" ] || [ "$(wc -c <"$window" | tr -d ' ')" -gt 4096 ]; then
+    echo "$window is not a file of at most 4 KiB: the window stays closed"
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line=${line%$'\r'}
+    [[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+    if [[ ! "$line" =~ ^[[:space:]]*([A-Za-z0-9_-]+)[[:space:]]*=[[:space:]]*([^[:space:]#]*)[[:space:]]*(#.*)?$ ]]; then
+      echo "$window: line $n is not a key=value line: the window stays closed"
+      return 0
+    fi
+    key=${BASH_REMATCH[1]} value=${BASH_REMATCH[2]}
+    case "$key" in
+      boot-firmware)
+        if [ -n "$fw" ] || [[ ! "$value" =~ ^(yes|no)$ ]]; then
+          echo "$window: line $n: boot-firmware must be given once, yes or no: the window stays closed"
+          return 0
+        fi
+        fw=$value
+        ;;
+      until)
+        if [ -n "$until" ] || [[ ! "$value" =~ ^[0-9]{1,12}$ ]]; then
+          echo "$window: line $n: until must be given once, in seconds since 1970: the window stays closed"
+          return 0
+        fi
+        until=$value
+        ;;
+      *)
+        echo "$window: line $n: unknown key $key: the window stays closed"
+        return 0
+        ;;
+    esac
+  done <"$window"
+  if [ "$fw" != yes ]; then
+    echo "the maintenance window does not allow boot firmware updates (boot-firmware=${fw:-no})"
+    return 0
+  fi
+  if [ -n "$until" ]; then
+    now=${IRONFLOCKOS_NOW:-$(date +%s)}
+    if [ "$now" -ge "$((10#$until))" ]; then
+      echo "the maintenance window ended at $until (now $now)"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# --- which capsule ------------------------------------------------------------
+conf_field() { [ -r "$boot_ctrl" ] && awk -v k="$1" '$1 == k { print $2; exit }' "$boot_ctrl"; }
+# spec_match A B: NVIDIA's TnSpec rule (FwPackageCheckTnSpec in edk2-nvidia):
+# as many dash-separated fields, and every field the same where neither is
+# empty.
+spec_match() {
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    n = split(a, x, "-"); m = split(b, y, "-")
+    if (n != m) exit 1
+    for (i = 1; i <= n; i++) if (x[i] != "" && y[i] != "" && x[i] != y[i]) exit 1
+    exit 0
+  }'
+}
+# capsule_for ROOT SPEC: the one capsule of ROOT's nvidia-l4t-bootloader with
+# an image for SPEC, the board's compatible spec; it fails when there is
+# none, or more than one.
+capsule_for() {
+  local root=$1 spec=$2 board f s found=()
+  board=${spec%%-*}
+  [[ "$board" =~ ^[0-9]{4}$ ]] || return 1
+  for f in "$root/$capsules/TEGRA_BL_$board"*.Cap; do
+    [ -f "$f" ] || continue
+    while IFS= read -r s; do
+      if spec_match "$spec" "$s"; then
+        found+=("$f")
+        break
+      fi
+    done < <(grep -aoE "$board-[A-Za-z0-9]*-[0-9]{4}-[A-Za-z0-9]*-[0-9]*-[A-Za-z0-9]*-[a-z0-9]+(-[a-z0-9]+)*-" "$f" | sort -u)
+  done
+  [ "${#found[@]}" -eq 1 ] || return 1
+  echo "${found[0]}"
+}
+
+# --- the ESP --------------------------------------------------------------------
+esp_free_kb() {
+  if [ -n "${IRONFLOCKOS_ESP_FREE_KB:-}" ]; then
+    echo "$IRONFLOCKOS_ESP_FREE_KB"
+  else
+    df -Pk "$esp" | awk 'NR == 2 { print $4 }'
+  fi
+}
+kb_of() { echo $((($(wc -c <"$1" | tr -d ' ') + 1023) / 1024)); }
+# remove_capsules: every capsule on the ESP, and bit 2 of OsIndications.
+remove_capsules() {
+  local f ok=0
+  for f in "$esp"/EFI/UpdateCapsule/*.[cC][aA][pP]; do
+    [ -e "$f" ] || continue
+    rm -f "$f" || ok=1
+  done
+  clear_capsule_bit || ok=1
+  return "$ok"
+}
+# copy_atomic FROM TO
+copy_atomic() {
+  cp "$1" "$2.new" || return 1
+  sync "$2.new" 2>/dev/null || sync
+  mv "$2.new" "$2" || return 1
+  sync "$(dirname "$2")" 2>/dev/null || sync
+}
+
+withdraw() {
+  local had
+  had=$(state_get capsule)
+  remove_capsules || refuse "could not remove the capsule from $esp/EFI/UpdateCapsule or clear OsIndications"
+  state_set capsule
+  state_set capsule-boot
+  state_set capsule-file
+  state_set capsule-version
+  [ -z "$had" ] || say "the capsule staged for slot $had is withdrawn"
+}
+
+stage() {
+  local slot=$1 root=$2 need need_n have why reason spec tnspec capsule name launcher bit need_kb free_kb
+  case "$slot" in A | B) ;; *) refuse "unknown slot '$slot' (A or B)" ;; esac
+  [ -d "$root/usr" ] || refuse "$root is not a root tree"
+  # A capsule from an earlier install never outlives this one.
+  withdraw
+  need=$(slot_l4t "$root") ||
+    refuse "slot $slot names no L4T release (/etc/nv_tegra_release): its boot firmware cannot be checked; not switching to it"
+  need_n=$(ver_num "$need")
+  chain_versions
+  have=$(fw_of "$slot")
+  if [ "$have" = "$need_n" ] && ! chain_failed "$slot"; then
+    say "the boot firmware of slot $slot is L4T $need, as the slot needs: no capsule"
+    return 0
+  fi
+  if [ -z "$have" ]; then
+    why="the version of the boot firmware of slot $slot is unknown (SystemFwVersions)"
+  elif [ "$have" = "$need_n" ]; then
+    why="the boot firmware of slot $slot is marked failed"
+  else
+    why="the boot firmware of slot $slot is L4T $(ver_str "$have"), the slot needs L4T $need"
+  fi
+  not_switching() { refuse "$why, and $1: not switching to slot $slot (docs/targets/jetson-orin.md, \"Boot firmware updates\")"; }
+  # The cases no capsule can mend, whatever the window says.
+  local same_gen=no lowest
+  if [ -n "$have" ] && [ "$have" != "$need_n" ]; then
+    [ $((have >> 16)) -eq $((need_n >> 16)) ] ||
+      not_switching "a capsule does not cross L4T releases (R$((have >> 16)) to R$((need_n >> 16))): the module needs a flash"
+    [ "$have" -lt "$need_n" ] ||
+      not_switching "a capsule does not take the firmware back to an older version (the firmware's lowest supported version)"
+    # One generation: the same release and major number (39.2.x).
+    [ $((have >> 8)) -ne $((need_n >> 8)) ] || same_gen=yes
+  fi
+  lowest=$(esrt_field lowest_supported_fw_version)
+  [[ ! "$lowest" =~ ^[0-9]+$ ]] || [ "$lowest" -le "$need_n" ] ||
+    not_switching "the firmware takes no capsule older than L4T $(ver_str "$lowest") (the ESRT's lowest supported version)"
+  # no_capsule REASON: within one generation, on older firmware, the slot is
+  # switched to without the capsule (RAUC switches through nvbootctrl), and
+  # the firmware follows with an OS update inside a window; across
+  # generations, or with the chain's firmware unknown or failed, not.
+  no_capsule() {
+    if [ "$same_gen" = yes ]; then
+      remove_capsules || not_switching "$1, and the ESP could not be cleaned of it"
+      say "$why, and $1: switching to slot $slot without the capsule; it runs on the older boot firmware L4T $(ver_str "$have") until an OS update inside a maintenance window brings L4T $need (if it does not boot on it, the firmware falls back after three tries)"
+      exit 0
+    fi
+    not_switching "$1"
+  }
+  if reason=$(window_closed); then
+    no_capsule "$reason"
+  fi
+  spec=$(conf_field COMPATIBLE_SPEC) || spec=""
+  [[ "$spec" =~ ^[0-9]{4}-[A-Za-z0-9._-]*$ ]] || no_capsule "$boot_ctrl names no COMPATIBLE_SPEC: the board is unknown"
+  capsule=$(capsule_for "$root" "$spec") || no_capsule "the slot carries no capsule (or more than one) for this board ($spec)"
+  name=$(basename "$capsule")
+  [ -d "$efivars" ] || no_capsule "there are no EFI variables at $efivars"
+  bit=$(var_u32 OsIndicationsSupported "$global_guid")
+  [ -z "$bit" ] || [ $((bit & 4)) -ne 0 ] ||
+    no_capsule "the firmware does not take capsules from the ESP (OsIndicationsSupported)"
+  [ -d "$esp/EFI" ] || no_capsule "the ESP is not at $esp"
+  launcher=$root/$capsules/BOOTAA64.efi
+  [ -f "$launcher" ] || no_capsule "the slot carries no L4TLauncher ($capsules/BOOTAA64.efi)"
+  need_kb=$(($(kb_of "$capsule") + $(kb_of "$launcher") + esp_margin_kb))
+  free_kb=$(esp_free_kb)
+  [[ "$free_kb" =~ ^[0-9]+$ ]] && [ "$free_kb" -ge "$need_kb" ] ||
+    no_capsule "the ESP has ${free_kb:-no} KiB free, the capsule needs $need_kb KiB"
+
+  # The firmware cancels a capsule, and with it a pending switch of the boot
+  # chain, while BootChainFwNext or BootChainFwStatus exists: the capsule
+  # does the switch itself. Status is the result of an earlier switch.
+  local v
+  for v in BootChainFwNext BootChainFwStatus; do
+    if [ -e "$(var_path "$v" "$nvidia_guid")" ]; then
+      say "$v was $(var_u32 "$v" "$nvidia_guid"); deleting it for the capsule"
+      var_delete "$v" "$nvidia_guid" || no_capsule "$v could not be deleted"
+    fi
+  done
+  # The firmware picks the capsule's images by these specs; NVIDIA's
+  # nv-l4t-bootloader-config sets them at every boot, which IronFlockOS masks
+  # (it would also verify every boot). The same rule, here only: the platform
+  # spec once, the compatible spec whenever it differs.
+  tnspec=$(conf_field TNSPEC) || tnspec=""
+  [[ "$tnspec" =~ ^[A-Za-z0-9._-]*$ ]] || tnspec=""
+  if [ -n "$tnspec" ] && [ ! -e "$(var_path TegraPlatformSpec "$nvidia_guid")" ]; then
+    var_write TegraPlatformSpec "$nvidia_guid" "\\x07\\x00\\x00\\x00$tnspec" || no_capsule "TegraPlatformSpec could not be written"
+    "$chattr" +i "$(var_path TegraPlatformSpec "$nvidia_guid")" 2>/dev/null || true
+  fi
+  if ! printf '\x07\x00\x00\x00%s' "$spec" | cmp -s - "$(var_path TegraPlatformCompatSpec "$nvidia_guid")" 2>/dev/null; then
+    var_write TegraPlatformCompatSpec "$nvidia_guid" "\\x07\\x00\\x00\\x00$spec" || no_capsule "TegraPlatformCompatSpec could not be written"
+    "$chattr" +i "$(var_path TegraPlatformCompatSpec "$nvidia_guid")" 2>/dev/null || true
+  fi
+
+  mkdir -p "$esp/EFI/UpdateCapsule" "$esp/EFI/BOOT"
+  if ! copy_atomic "$capsule" "$esp/EFI/UpdateCapsule/$name"; then
+    no_capsule "the capsule could not be copied to the ESP"
+  fi
+  if ! cmp -s "$launcher" "$esp/EFI/BOOT/BOOTAA64.efi" && ! copy_atomic "$launcher" "$esp/EFI/BOOT/BOOTAA64.efi"; then
+    no_capsule "L4TLauncher could not be copied to the ESP"
+  fi
+  if ! set_capsule_bit; then
+    no_capsule "OsIndications could not be written"
+  fi
+  state_set capsule "$slot"
+  state_set capsule-boot "$(boot_id)"
+  state_set capsule-file "$name"
+  state_set capsule-version "$need"
+  say "$why: staged NVIDIA's $name (L4T $need) on the ESP; at the next restart the firmware writes it to boot chain $slot and boots slot $slot with it"
+}
+
+pending() {
+  local id
+  [ "$(state_get capsule)" = "$1" ] || return 1
+  id=$(boot_id)
+  [ -n "$id" ] && [ "$(state_get capsule-boot)" = "$id" ]
+}
+
+# --- after the restart ----------------------------------------------------------
+# esrt_field NAME: of the system firmware's ESRT entry (type 1), else entry0.
+esrt_field() {
+  local e
+  for e in "$esrt"/entries/entry*; do
+    [ -r "$e/fw_type" ] && [ "$(cat "$e/fw_type")" = 1 ] || continue
+    cat "$e/$1" 2>/dev/null
+    return 0
+  done
+  cat "$esrt/entries/entry0/$1" 2>/dev/null || true
+}
+# las_text CODE: the ESRT's last attempt status, with NVIDIA's codes from
+# edk2-nvidia's TegraFmp.c (0x1800 on).
+las_text() {
+  local c=$1 nv
+  nv=(bad-image-pointer invalid-package-header unsupported-package-type invalid-package-image-info-array
+    image-too-big package-size-error not-updatable image-not-in-package mb1-invalidate-error
+    single-image-not-supported image-index-missing no-protocol-for-image image-attributes-error
+    bct-update-failed write-images-failed mb1-write-error verify-images-failed set-single-image-failed
+    fmp-lib-uninitialized boot-chain-update-canceled gpt-metadata-update-failed gpt-verify-failed
+    gpt-invalidate-failed gpt-write-failed set-inactive-boot-chain-bad-failed
+    set-inactive-boot-chain-good-failed update-bct-backup-partition-failed)
+  case "$c" in
+    0) echo success ;;
+    1) echo unsuccessful ;;
+    2) echo insufficient-resources ;;
+    3) echo incorrect-version ;;
+    4) echo invalid-format ;;
+    5) echo authentication-error ;;
+    6 | 7) echo power-event ;;
+    8) echo unsatisfied-dependencies ;;
+    *)
+      if [[ "$c" =~ ^[0-9]+$ ]] && [ "$c" -ge 6144 ] && [ "$c" -lt $((6144 + ${#nv[@]})) ]; then
+        echo "${nv[$((c - 6144))]}"
+      else
+        echo "status-$c"
+      fi
+      ;;
+  esac
+}
+
+report() {
+  local booted slot version want file id running las lav result detail out
+  booted=$(tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n 's/^rauc\.slot=//p' | tail -n 1) || booted=""
+  chain_versions
+  running=$(esrt_field fw_version)
+  las=$(esrt_field last_attempt_status)
+  lav=$(esrt_field last_attempt_version)
+  slot=$(state_get capsule)
+  id=$(boot_id)
+  if [ -n "$slot" ] && [ "$(state_get capsule-boot)" != "$id" ]; then
+    version=$(state_get capsule-version)
+    want=$(ver_num "${version:-0.0.0}")
+    file=$(state_get capsule-file)
+    if [ "$booted" = "$slot" ] && [ "$running" = "$want" ]; then
+      result=applied
+      detail="slot $slot runs on boot chain $slot with L4T $version"
+    elif [ "$lav" = "$want" ] && [ "${las:-}" = 0 ]; then
+      result=applied
+      detail="boot chain $slot has L4T $version, but the device fell back to slot ${booted:-?}"
+    elif [ -n "$file" ] && [ -e "$esp/EFI/UpdateCapsule/$file" ]; then
+      result=not-processed
+      detail="the firmware did not take $file from the ESP"
+    elif [ "$lav" = "$want" ] && [ -n "${las:-}" ]; then
+      result=failed
+      detail="the firmware rejected or could not write the capsule: $(las_text "$las") ($las)"
+    else
+      result=failed
+      detail="slot ${booted:-?} runs firmware L4T $(ver_str "$running"), not slot $slot with L4T $version"
+    fi
+    # Nothing staged outlives the restart it was staged for.
+    remove_capsules || say "could not remove a capsule left on the ESP"
+    state_set capsule
+    state_set capsule-boot
+    state_set capsule-file
+    state_set capsule-version
+    state_set capsule-result "$result"
+    state_set capsule-result-slot "$slot"
+    state_set capsule-result-version "$version"
+    state_set capsule-result-status "${las:-}"
+    say "the capsule $file for slot $slot (L4T $version): $result, $detail"
+    if [ "$result" != applied ] && [ -n "$booted" ] && [ "$booted" != "$slot" ]; then
+      # The slot was written for firmware it did not get: neither the
+      # firmware nor RAUC may switch to it.
+      "$rauc" status mark-bad other >/dev/null 2>&1 || say "RAUC could not mark slot $slot bad"
+    fi
+  fi
+  # The running slot's L4T release against its chain's firmware: behind
+  # after an update within one generation without a window.
+  local release fw behind=unknown
+  release=$(slot_l4t "${IRONFLOCKOS_ROOT:-}") || release=""
+  fw=""
+  case "$booted" in A | B) fw=$(fw_of "$booted") ;; esac
+  [ -n "$fw" ] || fw=$running
+  if [ -n "$release" ] && [[ "$fw" =~ ^[0-9]+$ ]]; then
+    if [ "$fw" -lt "$(ver_num "$release")" ]; then
+      behind=yes
+      say "slot $booted runs L4T $release on the older boot firmware L4T $(ver_str "$fw"): an OS update inside a maintenance window brings the firmware up"
+    else
+      behind=no
+    fi
+  fi
+  out=$run/boot-firmware
+  mkdir -p "$run"
+  {
+    echo "slot-release=${release:-unknown}"
+    echo "firmware-behind=$behind"
+    echo "slot-a-firmware=$(ver_str "$fw_A")"
+    echo "slot-b-firmware=$(ver_str "$fw_B")"
+    echo "running-firmware=$(ver_str "$running")"
+    echo "last-attempt-version=$(ver_str "$lav")"
+    echo "last-attempt-status=${las:-unknown}"
+    echo "capsule-result=$(state_get capsule-result)"
+    echo "capsule-slot=$(state_get capsule-result-slot)"
+    echo "capsule-version=$(state_get capsule-result-version)"
+  } >"$out.new"
+  mv "$out.new" "$out"
+  say "boot firmware: slot A L4T $(ver_str "$fw_A"), slot B L4T $(ver_str "$fw_B"), running L4T $(ver_str "$running")"
+}
+
+[ "$#" -ge 1 ] || refuse "usage: tegra-capsule stage SLOT ROOT|pending SLOT|withdraw|report"
+cmd=$1
+shift
+case "$cmd" in
+  stage)
+    [ "$#" -eq 2 ] || refuse "usage: tegra-capsule stage SLOT ROOT"
+    stage "$1" "$2"
+    ;;
+  pending)
+    [ "$#" -eq 1 ] || refuse "usage: tegra-capsule pending SLOT"
+    pending "$1"
+    ;;
+  withdraw)
+    [ "$#" -eq 0 ] || refuse "usage: tegra-capsule withdraw"
+    withdraw
+    ;;
+  report)
+    [ "$#" -eq 0 ] || refuse "usage: tegra-capsule report"
+    # Never a reason for a failed boot.
+    report || say "the report failed"
+    ;;
+  *) refuse "unknown command '$cmd'" ;;
+esac

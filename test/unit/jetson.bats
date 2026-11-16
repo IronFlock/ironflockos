@@ -41,10 +41,10 @@ setup() {
 @test "the package list is Orin's L4T flavour, without what the build replaces" {
   mapfile -t pkgs < <(read_list "$t/packages")
   for p in nvidia-l4t-core nvidia-l4t-kernel nvidia-l4t-kernel-nvgpu nvidia-l4t-kernel-oot-modules \
-    nvidia-l4t-initrd nvidia-l4t-cuda-nvgpu nvidia-l4t-bootloader-utils nvidia-container-toolkit; do
+    nvidia-l4t-initrd nvidia-l4t-cuda-nvgpu nvidia-l4t-bootloader-utils nvidia-l4t-bootloader nvidia-container-toolkit; do
     printf '%s\n' "${pkgs[@]}" | grep -qx "$p"
   done
-  ! printf '%s\n' "${pkgs[@]}" | grep -qE -- '-openrm$|^nvidia-l4t-(bootloader|extlinux|apt-source|configs)$|^linux-image-'
+  ! printf '%s\n' "${pkgs[@]}" | grep -qE -- '-openrm$|^nvidia-l4t-(extlinux|apt-source|configs)$|^linux-image-'
 }
 
 @test "mkrootfs pins every listed L4T package and keeps NVIDIA's archive below Ubuntu" {
@@ -78,7 +78,9 @@ setup() {
   grep -qx 'enable ironflockos-tegra-keep.timer' "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
   grep -q 'enable ironflockos-tegra-keep.timer$' "$repo/build/customize.sh"
   # No timer restarts a slot on trial: it gets one boot, as on the EFI targets.
-  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
+  # The board's nv_boot_control.conf and the boot firmware report run once per
+  # boot (WP-6.5).
+  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-board-conf.service\nironflockos-tegra-capsule.service\nironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
   # NVIDIA's unit that would verify every boot stays masked.
   grep -q 'mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service' "$repo/build/customize.sh"
 }
@@ -228,12 +230,30 @@ print(app_b.find("size").text.strip(), app_b.get("id"))
 
 @test "tegra-flash-package checks its arguments before it touches anything" {
   run bash "$repo/build/tegra-flash-package.sh"
-  [ "$status" -ne 0 ] && [[ "$output" == *"usage: tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD BOARDID BOARDSKU"* ]]
+  [ "$status" -ne 0 ] && [[ "$output" == *"usage: tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD [BOARDID BOARDSKU]"* ]]
+  run bash "$repo/build/tegra-flash-package.sh" "$BATS_TEST_TMPDIR" x.rootfs.ext4.zst jetson-orin-nano-devkit 3767
+  [ "$status" -ne 0 ] && [[ "$output" == *"usage:"* ]]
   if [ "$(id -u)" != 0 ]; then
     run bash "$repo/build/tegra-flash-package.sh" "$BATS_TEST_TMPDIR" x.rootfs.ext4.zst jetson-orin-nano-devkit 3767 0003
+    [ "$status" -ne 0 ] && [[ "$output" == *"needs root"* ]]
+    run bash "$repo/build/tegra-flash-package.sh" "$BATS_TEST_TMPDIR" x.rootfs.ext4.zst jetson-orin-nano-devkit
     [ "$status" -ne 0 ] && [[ "$output" == *"needs root"* ]]
   fi
   # NVIDIA's -r fix knows the BSP's exact getopts strings
   grep -q 'fix_reuse_option l4t_initrd_flash.func "u:p:P:v:c:r:-:S:k:i:" "u:p:P:v:c:r-:S:k:i:"' "$repo/build/tegra-flash-package.sh"
   grep -q 'fix_reuse_option l4t_create_images_for_kernel_flash.sh "k:u:p:v:c:r:-:S:i:" "k:u:p:v:c:r-:S:i:"' "$repo/build/tegra-flash-package.sh"
+}
+
+@test "tegra-flash-package makes the QSPI images and the NVMe's, both with rootfs A/B, as NVIDIA's workflow does" {
+  f=$repo/build/tegra-flash-package.sh
+  # NVIDIA's two --no-flash runs (Flashing Support, rootfs A/B on NVMe), -r in both
+  run grep -c 'ROOTFS_AB=1 \\$' "$f"
+  [ "$output" = 2 ]
+  run grep -c -- '--showlogs --no-flash -r \\$' "$f"
+  [ "$output" = 2 ]
+  grep -q -- '-p "-c $qspi_cfg" --network usb0 "$board" internal$' "$f"
+  grep -q -- '--external-only --append --network usb0 "$board" external$' "$f"
+  grep -q '^qspi_cfg=bootloader/generic/cfg/flash_t234_qspi.xml$' "$f"
+  # the internal run comes first: the external one appends to it
+  [ "$(grep -n ' internal$' "$f" | cut -d: -f1)" -lt "$(grep -n ' external$' "$f" | cut -d: -f1)" ]
 }

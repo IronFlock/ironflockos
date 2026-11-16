@@ -1,0 +1,15 @@
+# What the last boot firmware capsule did, and the firmware of both boot
+# chains (WP-6.5; docs/targets/jetson-orin.md, "Boot firmware updates"): in
+# the journal and in /run/ironflockos/boot-firmware. A capsule that did not
+# apply is taken off the ESP and its slot marked bad. Never fails the boot.
+[Unit]
+Description=IronFlockOS: report the boot firmware and the last capsule
+After=local-fs.target
+Before=ironflockos-tegra-keep.service
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/lib/ironflockos/tegra-capsule report
+
+[Install]
+WantedBy=multi-user.target

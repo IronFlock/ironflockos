@@ -66,6 +66,27 @@ conf() {
   [[ "$output" == *"pinned hashes only"* ]]
 }
 
+@test "--license fetches NVIDIA's Agreement on its own pins and prints its path" {
+  lic=Tegra_Software_License_Agreement-Tegra-Linux.txt
+  printf 'a fake agreement\n' >"$dir/www/$lic"
+  lsha1=$(sha1sum "$dir/www/$lic" | cut -d' ' -f1)
+  lsha256=$(sha256sum "$dir/www/$lic" | cut -d' ' -f1)
+  printf '%s *./%s\n%s *./%s\n' "$sha1" "$name" "$lsha1" "$lic" >"$dir/www/release_sha_hashes.txt"
+  printf 'BSP_LICENSE_URL=file://%s/www/%s\nBSP_LICENSE_SHA1=%s\nBSP_LICENSE_SHA256=%s\n' "$dir" "$lic" "$lsha1" "$lsha256" >>"$IRONFLOCKOS_BSP_CONF"
+  run "$fetch" --license "$dir/cache"
+  [ "$status" -eq 0 ]
+  [ "${lines[${#lines[@]} - 1]}" = "$dir/cache/$lic" ]
+  cmp -s "$dir/cache/$lic" "$dir/www/$lic"
+  [ ! -e "$dir/cache/$name" ]
+  printf 'another text\n' >"$dir/www/$lic"
+  rm "$dir/cache/$lic"
+  run "$fetch" --license "$dir/cache"
+  [ "$status" -ne 0 ] && [[ "$output" == *"does not match the pinned"* ]]
+  [ ! -e "$dir/cache/$lic" ]
+  run "$fetch" --license "$dir/cache" "$dir/out"
+  [ "$status" -ne 0 ] && [[ "$output" == *"usage: fetch-bsp.sh --license CACHE_DIR"* ]]
+}
+
 @test "the target's pin is complete" {
   unset IRONFLOCKOS_BSP_CONF
   . "$repo/build/lib.sh"
@@ -73,4 +94,14 @@ conf() {
   [[ "$BSP_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$BSP_SHA1" =~ ^[0-9a-f]{40}$ ]]
   [[ "$BSP_URL" == https://developer.download.nvidia.com/* ]] && [[ "$BSP_HASHES_URL" == https://* ]]
   [[ "$BSP_URL" == *"R$L4T_VERSION"* ]]
+  # NVIDIA's Agreement, next to the tarball (the flash kit shows it)
+  [[ "$BSP_LICENSE_SHA256" =~ ^[0-9a-f]{64}$ ]] && [[ "$BSP_LICENSE_SHA1" =~ ^[0-9a-f]{40}$ ]]
+  [ "${BSP_LICENSE_URL%/*}" = "${BSP_URL%/*}" ]
+  [ "${BSP_LICENSE_URL##*/}" = Tegra_Software_License_Agreement-Tegra-Linux.txt ]
+}
+
+@test "the repository holds no copy of NVIDIA's Agreement" {
+  ! git -C "$repo" ls-files | grep -qiE 'Tegra_Software_License_Agreement|NVIDIA-LICENSE'
+  # its opening line, split here so that this file does not hold it
+  ! git -C "$repo" grep -qF "IMPORTANT NOTICE – PLEASE READ"" AND AGREE BEFORE USING THE SOFTWARE"
 }

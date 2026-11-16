@@ -1,0 +1,66 @@
+IronFlockOS flash kit for NVIDIA Jetson Orin
+============================================
+
+This kit writes IronFlockOS onto the NVMe drive of an NVIDIA Jetson Orin
+module (Orin Nano, Orin NX, AGX Orin), and the module's QSPI firmware, from a
+Linux PC with the module attached over USB in recovery mode.
+
+The kit holds IronFlockOS's own scripts only (Apache License 2.0, LICENSE).
+It does not contain any of NVIDIA's software. While it runs, it downloads
+NVIDIA Jetson Linux (the BSP) from NVIDIA and runs NVIDIA's flash tools from
+it. NVIDIA licenses the BSP to you under the NVIDIA Driver License
+Agreement: the kit shows it and asks you to accept it before it unpacks or
+runs anything of NVIDIA's.
+
+The full guide, with what to do when a step fails:
+https://github.com/IronFlock/ironflockos/blob/main/docs/targets/jetson-orin.md#flashing-a-module
+
+
+What you need
+-------------
+
+- A PC with an x86-64 CPU and Ubuntu 22.04 or 24.04, not a virtual machine,
+  with internet access, sudo, and about 25 GB of free disk space.
+- The USB cable from the PC to the carrier board's flashing port (USB-C next
+  to the 40-pin header on the AGX Orin Developer Kit; the USB-C port of the
+  Orin Nano Developer Kit). Connect it directly, not through a hub.
+- An NVMe drive in the carrier board's M.2 slot. Everything on it is erased.
+- The device's .flock file from IronFlock, so it enrolls at its first boot.
+
+
+Flashing
+--------
+
+1. Put the module into recovery mode.
+   Orin Nano Developer Kit carrier (Orin Nano, Orin NX): unplug the power,
+   put a jumper across the REC and GND pins of the button header, plug the
+   power in.
+   AGX Orin Developer Kit: with it off, hold the Force Recovery button, press
+   and release Power, then release Force Recovery.
+   `lsusb -d 0955:` on the PC then lists the module.
+
+2. Unpack the kit and run it with the module's board and the .flock:
+
+     tar -xzf ironflockos-jetson-flash-kit-<version>.tar.gz
+     cd ironflockos-jetson-flash-kit-<version>
+     sudo ./ironflockos-jetson-flash --board jetson-orin-nano-devkit --flock ~/my-device.flock
+
+   Boards: jetson-orin-nano-devkit (Orin Nano and Orin NX on the Orin Nano
+   Developer Kit carrier), jetson-orin-nano-devkit-super, jetson-agx-orin-devkit,
+   jetson-agx-orin-devkit-super, jetson-agx-orin-devkit-industrial.
+   `./ironflockos-jetson-flash --help` lists every option.
+
+3. Read NVIDIA's Agreement and type yes to accept it.
+
+4. The kit downloads the IronFlockOS image of its release and checks it
+   against the signed release catalog, downloads NVIDIA's BSP and checks it
+   against the SHA-256 the kit pins, installs NVIDIA's host packages, makes
+   the flash package and flashes the module (about 15 minutes). Downloads are
+   kept in ./ironflockos-jetson/cache for the next run.
+
+5. When the kit says "flashed", the module restarts. On the Orin Nano
+   Developer Kit carrier, unplug the power, remove the recovery jumper and
+   plug the power in again. The module starts IronFlockOS, enrolls with the
+   .flock and appears online in IronFlock.
+
+To flash again, put the module into recovery mode and run the same command.

@@ -1,0 +1,14 @@
+# The module's /etc/nv_boot_control.conf from its ESP, where the flash kit
+# put it (WP-6.5; docs/targets/jetson-orin.md, "Boot firmware updates"), for
+# nvbootctrl and tegra-capsule. Never fails the boot.
+[Unit]
+Description=IronFlockOS: the module's nv_boot_control.conf from the ESP
+After=local-fs.target
+Before=ironflockos-tegra-capsule.service ironflockos-tegra-keep.service
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/lib/ironflockos/tegra-board-conf
+
+[Install]
+WantedBy=multi-user.target

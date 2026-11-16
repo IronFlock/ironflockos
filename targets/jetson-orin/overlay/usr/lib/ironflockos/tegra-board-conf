@@ -1,0 +1,64 @@
+#!/bin/sh
+# The module's /etc/nv_boot_control.conf, from its ESP (WP-6.5;
+# docs/targets/jetson-orin.md, "Boot firmware updates").
+#
+# NVIDIA's flash.sh writes the file for the module it flashes: TNSPEC (board
+# id, fab, SKU, revision, fuse level, chip revision, the board configuration
+# flashed, the root device), COMPATIBLE_SPEC and TEGRA_CHIPID. Some of it the
+# module cannot tell by itself: the board configuration ("jetson-orin-nano-
+# devkit" or "-super") is the flash's choice, and NVIDIA's own boot script
+# only refreshes the EEPROM's fields of a file that is already there. The
+# slot images are the release's, for every module, so the flash kit puts the
+# file onto the ESP next to the .flock (build/tegra-flash-flock.sh put-board),
+# and this script copies it to /etc at every boot when /etc's is missing or
+# differs. The ESP outlives OS updates; a new flash brings a new file.
+#
+# nvbootctrl reads the chip id from the file, and tegra-capsule the board's
+# specs: without it nvbootctrl falls back to the device tree and no boot
+# firmware capsule can be staged; the device runs all the same. Never a
+# reason to fail or hold the boot: every path ends with exit 0 and a line in
+# the journal.
+#
+# IRONFLOCKOS_ESP and IRONFLOCKOS_BOOT_CTRL_CONF: for the unit tests.
+set -u
+esp_conf=${IRONFLOCKOS_ESP:-/boot/efi}/nv_boot_control.conf
+conf=${IRONFLOCKOS_BOOT_CTRL_CONF:-/etc/nv_boot_control.conf}
+
+say() { echo "tegra-board-conf: $*"; }
+
+# valid FILE: NVIDIA's nv_boot_control.conf as the kit checks it: text of at
+# most 4 KiB naming TNSPEC, COMPATIBLE_SPEC and TEGRA_CHIPID once each, as
+# "KEY value".
+valid() {
+  [ -f "$1" ] || return 1
+  [ "$(wc -c <"$1" | tr -d ' ')" -le 4096 ] || return 1
+  ! LC_ALL=C grep -q '[^[:print:][:space:]]' "$1" || return 1
+  for k in TNSPEC COMPATIBLE_SPEC TEGRA_CHIPID; do
+    [ "$(awk -v k="$k" '$1 == k && NF == 2 && $2 ~ /^[A-Za-z0-9._-]+$/ { n++ } $1 == k { m++ } END { print n + 0, m + 0 }' "$1")" = "1 1" ] ||
+      return 1
+  done
+}
+
+if [ ! -e "$esp_conf" ]; then
+  if [ -e "$conf" ]; then
+    say "no nv_boot_control.conf on the ESP; $conf stays as it is"
+  else
+    say "no nv_boot_control.conf on the ESP or in /etc: nvbootctrl uses its fallback, and no boot firmware capsule can be staged (flash the module with the flash kit)"
+  fi
+  exit 0
+fi
+if ! valid "$esp_conf"; then
+  say "$esp_conf is not NVIDIA's nv_boot_control.conf (TNSPEC, COMPATIBLE_SPEC, TEGRA_CHIPID): $conf stays as it is"
+  exit 0
+fi
+if cmp -s "$esp_conf" "$conf"; then
+  say "$conf is the module's ($(awk '$1 == "COMPATIBLE_SPEC" { print $2 }' "$esp_conf"))"
+  exit 0
+fi
+if cp "$esp_conf" "$conf.new" 2>/dev/null && chmod 0644 "$conf.new" && mv -f "$conf.new" "$conf"; then
+  say "copied the module's nv_boot_control.conf from the ESP to $conf ($(awk '$1 == "COMPATIBLE_SPEC" { print $2 }' "$conf"))"
+else
+  rm -f "$conf.new" 2>/dev/null
+  say "could not write $conf: it stays as it was"
+fi
+exit 0
