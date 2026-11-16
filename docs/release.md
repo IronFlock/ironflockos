@@ -162,8 +162,8 @@ names the release commit. The dry run checks the same steps on its own run
 Every test runs in the release pull request's CI, before the merge
 ([ADR-0019](adr/0019-every-test-runs-before-the-merge.md)): the unit tests,
 every image as a development build in QEMU with the whole sequence (first
-boot, update into slot B, rollback under KVM, factory reset, fallback, crash), the installer
-sticks, and the dry run of `release.yml` with its release build of every
+boot, update into slot B, rollback under KVM, factory reset through
+`ironflock os reset`, fallback, crash), the installer sticks, and the dry run of `release.yml` with its release build of every
 image, whose `e2e` boots and reboots the release image of `amd64-efi base`.
 Of the release images, only that one is booted; the other seven are
 published without a test of their own bytes, their development builds
