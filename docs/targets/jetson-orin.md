@@ -78,8 +78,9 @@ writing NVIDIA's platform spec variables (`TegraPlatformSpec`,
 `TegraPlatformCompatSpec`, which capsule updates check), the board spec in
 `/etc/nv_boot_control.conf`, mounting the ESP (the image's `/etc/fstab` does)
 and renaming old kernel partitions. `tegra-capsule` writes the two spec
-variables, by NVIDIA's rule, when it stages a capsule ("Boot firmware
-updates").
+variables, by NVIDIA's rule, when it stages a capsule, and `tegra-board-conf`
+puts the module's `/etc/nv_boot_control.conf` in place at boot ("Boot
+firmware updates", "The module's nv_boot_control.conf").
 
 NVIDIA's `nvidia-l4t-init` also sets the hardware watchdog to 120 seconds
 (`/etc/systemd/system.conf.d/watchdog.conf`), which comes after IronFlockOS's
@@ -339,6 +340,43 @@ only, picked by the board name in `COMPATIBLE_SPEC` of
 A module on another carrier board gets no capsule from NVIDIA; for it the
 lane needs a generated one (WP-6.8 first).
 
+### The module's nv_boot_control.conf
+
+`/etc/nv_boot_control.conf` names the module: `TNSPEC` (board id, fab, SKU,
+revision, fuse level, chip revision, the board configuration flashed, the
+root device), `COMPATIBLE_SPEC` (the same with NVIDIA's normalisation: for an
+Orin Nano 8GB on the developer kit `3767--0003--1--jetson-orin-nano-devkit-`)
+and `TEGRA_CHIPID` (`0x23`), and a few deprecated or IGX-only lines.
+`nvbootctrl` reads the chip id from it (else the device tree);
+`tegra-capsule` chooses the capsule by `COMPATIBLE_SPEC` and writes the
+platform spec variables from it.
+
+NVIDIA's `flash.sh` writes it for the module it flashes. The device cannot
+make all of it by itself: board id, SKU, fab and revision are in the module's
+EEPROM, but the board configuration (`jetson-orin-nano-devkit` or `-super`,
+which changes the firmware in the capsule), the fuse level and the root
+device are the flash's. NVIDIA's own boot script (`nv-l4t-bootloader-config`)
+only refreshes the EEPROM's fields of a file that is already there, and
+exits without one. Run without `-l` and `-v` it would also rename partitions,
+rewrite `/etc/fstab` when the ESP is not mounted, and update the QSPI firmware
+by itself on an Orin Nano developer kit (SKU 5); IronFlockOS keeps it masked.
+
+So the flash kit puts the file `flash.sh` wrote onto the package's ESP, next
+to the `.flock` ("Flashing a module", step 8), and
+`ironflockos-tegra-board-conf.service` runs
+`/usr/lib/ironflockos/tegra-board-conf` at every boot, before the capsule
+report and the health gate: when the ESP holds an `nv_boot_control.conf` of
+NVIDIA's shape (text of at most 4 KiB naming `TNSPEC`, `COMPATIBLE_SPEC` and
+`TEGRA_CHIPID` once each) and `/etc` has none or another, it copies it to
+`/etc`. The slot images carry none: they are the release's, for every module.
+The ESP outlives OS updates, and a new flash brings a new file. Without a
+file on the ESP the device runs as before, `/etc`'s stays, and the journal
+says that no capsule can be staged. It never fails or holds the boot.
+Computing the file on the device from the EEPROM (NVIDIA reads it over I2C,
+bus 0, address 0x50, bytes 25 to 41 on T234) could replace the ESP's copy
+later, for modules flashed some other way; it would still lack the board
+configuration.
+
 ### What an OS update does
 
 The lock-step rule: the firmware of the chain of slot X is the L4T release
@@ -483,8 +521,9 @@ nothing, and the health gate restarts at most once per trial.
 
 - `SystemFwVersions`, the ESRT and DMI read as above on a flashed module, both
   chains 39.2.1; the flash writes `TegraPlatformCompatSpec`, or `stage` writes
-  it, and `/etc/nv_boot_control.conf` is in both slots (WP-6.4) with the
-  `COMPATIBLE_SPEC` NVIDIA's `nv-l4t-bootloader-config` would compute;
+  it; `flash.sh` writes `nv_boot_control.conf` in a real flash as in the CI's
+  offline one, with the `COMPATIBLE_SPEC` NVIDIA's `nv-l4t-bootloader-config`
+  would compute, and it reaches `/etc` from the ESP;
 - the update across an L4T release with a capsule: the firmware writes the
   other chain and boots the other slot on the same reboot; `report` says
   `applied`; and the rollback to the old pair;
@@ -702,11 +741,15 @@ On an AGX Orin the eMMC keeps what it holds.
    SHA-1 (`build/tegra-flash-flock.sh`). It refuses a file that is not a
    device's `.flock` before anything is downloaded. Without `--flock` the
    device boots and waits for one, as an image from FlockFlasher without one
-   does.
+   does. The same way the kit puts the `nv_boot_control.conf` that NVIDIA's
+   `flash.sh` wrote for the module onto the ESP, which the device copies to
+   `/etc` at every boot ("The module's nv_boot_control.conf"); without one
+   the kit warns and goes on, and the device cannot update its boot
+   firmware.
 9. **The flash:** `l4t_initrd_flash.sh --showlogs --network usb0 --flash-only
    --erase-all` from the BSP, with NVIDIA's own output, about 15 minutes:
    the QSPI firmware, then the NVMe.
-10. **The end.** The kit takes the `.flock` off the package again, whether
+10. **The end.** The kit takes the `.flock` and the conf off the package again, whether
     the flash worked or not, so no copy of it stays on the PC. It says
     `flashed: the module restarts into IronFlockOS <version>, slot A`. On the
     Orin Nano Developer Kit carrier, unplug the power, remove the jumper and
@@ -740,8 +783,9 @@ CI (`jetson-flash`) runs the packed kit from its archive with `--no-flash`
 on every pull request: the Agreement from NVIDIA with
 `--accept-nvidia-license`, the build's slot image against its SHA-256, the
 BSP from the cache checked before it is unpacked, NVIDIA's prerequisites,
-both package runs offline for an Orin Nano 8GB, a test `.flock` put on the
-ESP and read back, and the package without it at the end. The unit tests
+both package runs offline for an Orin Nano 8GB, a test `.flock` and
+`flash.sh`'s `nv_boot_control.conf` put on the ESP and read back, and the
+package without them at the end. The unit tests
 (`test/unit/jetson-flash-kit.bats`) cover the kit's own decisions with fakes.
 
 Only a module can prove (WP-6.6):
@@ -755,7 +799,8 @@ Only a module can prove (WP-6.6):
 - that the QSPI images carry rootfs A/B (`RootfsRedundancyLevel` 1);
 - that the ESP's image in the package is a plain FAT image, that the device
   side of NVIDIA's flash checks it against the index's SHA-1 and nothing
-  else, and that the `.flock` arrives on `/boot/efi`;
+  else, and that the `.flock` and `nv_boot_control.conf` arrive on
+  `/boot/efi`;
 - the recovery-mode steps and USB ids above;
 - a flash from a host with Ubuntu 22.04 and one with 24.04.
 
@@ -769,13 +814,15 @@ against a model of NVIDIA's firmware that counts boots as
 firmware lane the same way: every case of `stage` (each reason to skip or
 refuse, the variables' bytes, the capsule's place and name, the window file),
 the backend with a staged capsule, an update through a model of the firmware
-that applies or rejects the capsule, `report`, and the build's check.
+that applies or rejects the capsule, `report`, the build's check, and
+`tegra-board-conf` (the ESP's file to `/etc`, a file that is not NVIDIA's, no
+file, `/etc` not writable).
 `test/unit/jetson.bats` checks the target's files.
 `test/unit/jetson-flash-kit.bats` tests the flash kit with fakes of
 NVIDIA's BSP and Agreement, a release catalog signed with a throwaway key and
 a fake ESP image: the order of its steps (nothing of NVIDIA's before the
 Agreement is accepted, nothing unpacked before the checksums), the boards,
-the `.flock` and the archive.
+the `.flock` and `nv_boot_control.conf` on the ESP, and the archive.
 
 `just build jetson-orin base` builds the image and leaves the tree in
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
@@ -799,11 +846,12 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
   `jetson-flash` job prints the one it wrote). `nvbootctrl` reads the chip id
   from it and falls back to the device tree without it (its strings);
   NVIDIA's OTA tools and capsule scripts need it, and so does
-  `tegra-capsule` (`COMPATIBLE_SPEC`, `TNSPEC`). The flash package does not
-  put it into APP and APP_b (WP-6.4 decided so): it describes the module.
-  `rauc-post-install` carries it into every slot it writes, but nothing
-  creates it on a module flashed with the kit yet, so no capsule can be
-  staged there.
+  `tegra-capsule` (`COMPATIBLE_SPEC`, `TNSPEC`). The slot images do not
+  carry it (it describes the module); the flash kit puts it onto the ESP,
+  and `tegra-board-conf` copies it to `/etc` at every boot ("The module's
+  nv_boot_control.conf"; `rauc-post-install` also carries it into the slot
+  it writes). A module flashed another way has none until it is flashed
+  with the kit: it runs, but its boot firmware cannot be updated.
 - The first flash of a module, the A/B switch, the forced fallback and a
   capsule update (WP-6.6, above).
 - eMMC as the system disk (AGX Orin without NVMe): `build/tegra-layout.py`

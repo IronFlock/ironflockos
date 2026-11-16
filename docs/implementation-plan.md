@@ -700,7 +700,8 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   and runs NVIDIA's `--flash-only`. Boards: the Orin Nano/NX and AGX Orin developer kit
   configurations, NVMe only. CI packs the kit and runs it from the archive with
   `--no-flash` (`jetson-flash`). `/etc/nv_boot_control.conf` stays out of the slots: the
-  device has to write it at boot, with WP-6.5. No release publishes the kit before
+  kit puts the one `flash.sh` wrote onto the ESP, and the device copies it to `/etc` at
+  boot (`tegra-board-conf`, with WP-6.5). No release publishes the kit before
   WP-6.8 (`docs/release.md`, "Not yet"); the Nano devkit uses the kit, as the SD image
   waits for WP-6.8's question 1.
 
@@ -734,7 +735,10 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   `TegraPlatformCompatSpec` itself when it stages (the firmware matches the
   capsule's images by them), so `nv-l4t-bootloader-config` stays masked. The window
   is `/data/ironflockos/maintenance.conf`, a contract the device-agent and Studio
-  have yet to implement. Details: `docs/targets/jetson-orin.md`, "Boot firmware
+  have yet to implement. The capsule is chosen by `COMPATIBLE_SPEC` of
+  `/etc/nv_boot_control.conf`, which a device cannot make by itself (the board
+  configuration is the flash's): the flash kit puts `flash.sh`'s file onto the ESP, and
+  `tegra-board-conf` copies it to `/etc` at every boot. Details: `docs/targets/jetson-orin.md`, "Boot firmware
   updates".
 
 ### WP-6.6 Jetson hardware acceptance; FlockFlasher entries; target docs (5 days)
