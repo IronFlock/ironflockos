@@ -119,9 +119,9 @@ decision), in progress.
 | 8.3 | Messages on the splash | ironflockos | 1.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.5 | The kiosk app | its own repository | own plan | the contract in kiosk-plan.md | open, built outside this repository |
-| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | open: needs the machine |
+| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | prepared (`screen-report` and the checklist); open: the report from the machine on the next release, and the keys, touch and a recording with a person at the machine |
 | 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's background colour (#212); open: the proof on the machine (8.6) |
-| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | parked (Marko, 2026-11-16) until a panel can be looked at |
 
 Totals in days as planned: Phase 0 remaining 4.5; Phase 1 20; Phase 2 31.5 across four
 repositories; Phase 3 9; Phase 4 6; Phase 4b 6; Phase 5 15 (+8 follow-up); Phase 6 25
