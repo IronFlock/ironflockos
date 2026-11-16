@@ -2,19 +2,19 @@
 
 NVIDIA Jetson AGX Orin, Orin NX and Orin Nano on Jetson Linux r39.2.1 (JetPack
 7.2.1) with an Ubuntu 24.04 userspace (ADR-0008; Phase 6). Work in progress:
-CI builds slot A's filesystem image and the RAUC bundle and checks the root
-tree (WP-6.2). Those CI jobs (`jetson-rootfs`, `jetson-flash`) are switched
-off for now to save CI time, until the Jetson work continues. Still to come:
+CI builds slot A's filesystem image and the RAUC bundle, checks the root tree
+and makes the flash package without a module (WP-6.2). The RAUC backend over
+`nvbootctrl` and the health gate are built and unit-tested (WP-6.3); nobody
+has run them on a module yet. Still to come:
 
-- the flash dry run (WP-6.2);
-- the flash package and the SD image (WP-6.4);
-- the RAUC backend (WP-6.3);
-- the QSPI lane (WP-6.5).
+- the flash kit and the SD image (WP-6.4);
+- the QSPI lane (WP-6.5);
+- the A/B switch and the forced fallback on a module (WP-6.6).
 
 | | |
 |---|---|
 | Boot | NVIDIA's UEFI firmware in QSPI starts L4TLauncher, which reads the root slot's `/boot/extlinux/extlinux.conf` and boots its `/boot/Image` with `/boot/initrd` (see below) |
-| A/B | NVIDIA's rootfs A/B: root slots `APP` and `APP_b`, switched through `nvbootctrl -t rootfs` by a RAUC `custom` backend (WP-6.3) |
+| A/B | NVIDIA's rootfs A/B: root slots `APP` and `APP_b`, switched through `nvbootctrl -t rootfs` by a RAUC `custom` backend (`/usr/lib/ironflockos/tegra-rootfs-ab`); NVIDIA's firmware falls back after three warm boots nobody verified (see below) |
 | Distribution | `ubuntu-noble` (`distros/ubuntu-noble`): ports.ubuntu.com, Docker's noble repository |
 | Kernel | `nvidia-l4t-kernel` 6.8.12 (`6.8.12-1021-tegra`) with NVIDIA's out-of-tree modules; Orin's GPU driver is `nvgpu` (`-nvgpu` packages; `-openrm` is Thor's) |
 | GPU in containers | `nvidia-container-toolkit` 1.19.1 from NVIDIA's `common` repository; Docker's `nvidia` runtime (`ironflock bake` adds it); `nv-load-gpu-libs` links the board's `libcuda` and writes the container CSVs on each boot |
@@ -55,8 +55,25 @@ afterwards, as NVIDIA's own image build does.
 
 IronFlockOS masks two of NVIDIA's boot-time services:
 
-- `nv-l4t-bootloader-config` updates the QSPI firmware by itself. IronFlockOS's lane 2 does that (WP-6.5).
-- `nv-rootfs-validation-config` marks the root slot good. IronFlockOS's health gate does that (WP-6.3).
+- `nv-l4t-bootloader-config` updates the QSPI firmware by itself, and runs
+  `nvbootctrl verify` at every boot, which marks the boot successful. It would
+  end the trial of every updated slot before the device-agent has reached the
+  platform, and defeat the fallback. IronFlockOS's lane 2 updates the QSPI
+  firmware (WP-6.5); the health gate below verifies the boot.
+- `nv-rootfs-validation-config` runs before it, and reboots when a user
+  validation script (`/usr/sbin/user_rootfs_validation.sh`) fails: at every
+  boot, without a bound. IronFlockOS has no such script.
+
+Masking `nv-l4t-bootloader-config` also leaves out what else it does at boot:
+writing NVIDIA's platform spec variables (`TegraPlatformSpec`,
+`TegraPlatformCompatSpec`, which capsule updates check), the board spec in
+`/etc/nv_boot_control.conf`, mounting the ESP (the image's `/etc/fstab` does)
+and renaming old kernel partitions. The capsule lane has to do the spec
+variables (WP-6.5).
+
+NVIDIA's `nvidia-l4t-init` also sets the hardware watchdog to 120 seconds
+(`/etc/systemd/system.conf.d/watchdog.conf`), which comes after IronFlockOS's
+60 seconds and wins. Either way a hung system is reset.
 
 The rest of `nvidia-l4t-init` stays enabled as NVIDIA presets it: GPU libraries,
 display modules, power model, fan control.
@@ -84,6 +101,154 @@ IronFlockOS does the same:
 The rest of the command line is NVIDIA's for the Orin modules (`TEGRA_CMDLINE`
 in `target.conf`, from `CMDLINE_ADD` of `p3701.conf.common` and
 `p3767.conf.common`). L4TLauncher fills in `${cbootargs}`.
+
+## A/B with nvbootctrl
+
+With rootfs A/B, NVIDIA's UEFI firmware (L4TLauncher, `L4TRootfsValidation.c`
+in NVIDIA's edk2-nvidia, branch `r39.2.1-updates`) decides which root slot
+boots. Slot A is `APP`, slot B `APP_b`; NVIDIA numbers them 0 and 1. What it
+does:
+
+- The root slot is tied to the boot chain of the QSPI firmware
+  (`RootfsRedundancyLevel` 1): switching the slot switches the chain, through
+  the variable `BootChainFwNext` and a reset.
+- It counts boots in a scratch register of the PMC: two bits of tries per
+  slot, the current slot, and a magic number. A cold boot (power on) and a
+  switch of the boot chain start the register over, with
+  `RootfsRetryCountMax` (3) tries for each slot that is not unbootable. Every
+  boot takes one try off the slot it starts. A warm reboot (`reboot`, a kernel
+  panic with `panic=10`, the hardware watchdog) keeps the register; that the
+  watchdog's reset is warm is still to prove on a module.
+- A slot without tries is marked unbootable (EFI variable
+  `RootfsStatusSlotA`/`B` = `0xFF`), and the firmware switches to the other
+  slot if that one has tries left. When both are unbootable it starts NVIDIA's
+  recovery kernel, from which the device does not come online.
+- `nvbootctrl verify` clears the register: the slot that runs has its three
+  tries again at the next boot.
+
+So the firmware falls back only after three boots of a slot, all warm, that
+nobody verified. A system that comes up but never reaches the platform is
+not rebooted by anyone, and a power cut resets the count. The backend and the
+health gate below close both gaps.
+
+### The backend
+
+`/usr/lib/ironflockos/tegra-rootfs-ab` answers RAUC's custom backend
+protocol, like the Raspberry Pi's `rpi-tryboot`:
+
+| RAUC asks | The backend |
+|-----------|-------------|
+| `get-current` | `Current rootfs slot` of `nvbootctrl -t rootfs dump-slots-info` |
+| `get-primary` | `Active rootfs slot` of the same: the slot the next boot starts |
+| `get-state X` | `good` for the slot that runs; for the other `good` only if it was marked good while it ran (the backend's state file) and the firmware has not marked it unbootable since; else `bad` |
+| `set-state X good` | on the slot that runs: `nvbootctrl verify`, the slot is good and its trial ends. On the other slot: nothing (only a slot that runs is vouched for) |
+| `set-state X bad` | on the other slot (RAUC does this before it writes a slot): the next boot is the running slot's, and the slot is marked unbootable for the firmware, as NVIDIA's own update engine does. On the running slot: the next boot goes to the other slot, only if that one is known good; the running slot stays bootable for the firmware |
+| `set-primary X` | on the other slot (RAUC does this after writing it): the slot is made bootable (`RootfsStatusSlotX` = 0), `nvbootctrl -t rootfs set-active-boot-slot N`, and the slot is on trial. On the running slot: a pending switch to the other slot is dropped |
+
+The backend's own state is `/data/rauc/ironflockos-tegra-rootfs-ab.state`:
+`A=` and `B=` (`good`, `bad`, `trying`), `trial=` (the slot on trial) and the
+trial's counters.
+
+Every answer comes from `nvbootctrl`'s output or the backend fails, with exit
+code 1 and the reason on stderr; it never guesses:
+
+- `nvbootctrl` missing or failing, output of another shape, or rootfs A/B not
+  enabled (`RootFS A/B is not enabled.`);
+- `set-primary`: efivarfs not there, the `RootfsStatusSlot` variable missing,
+  `set-active-boot-slot` failing, or `nvbootctrl` not reporting the slot as
+  the active one afterwards. The slot is then marked unbootable again and the
+  running slot stays the next boot; RAUC's install fails;
+- `set-state X bad` of the running slot when the other slot is not known
+  good: the device would have no slot known to boot;
+- `set-state` and `set-primary` when `nvbootctrl`'s current slot is not the
+  `rauc.slot=` of the kernel command line: RAUC's target could be the slot
+  that runs;
+- `set-state X good` when `nvbootctrl verify` fails: the trial goes on.
+
+`RootfsStatusSlotA`/`B` are written as efivarfs files: 4 bytes of attributes
+(7: non-volatile, boot service and runtime access, as the firmware makes
+them), then the 32-bit value; `chattr -i` before and `chattr +i` after, as
+NVIDIA's own scripts do; read back afterwards. The backend writes them itself
+because `nvbootctrl` r39.2.1 has no command for it (no
+`set-slot-as-unbootable`, no `mark-boot-successful`; see "What nvbootctrl
+r39.2.1 does" below).
+
+### The health gate
+
+The device-agent marks the booted slot good once it has reached the platform
+(`rauc status mark-good`, device-agent 1.6.0), as on the other targets. On
+Jetson that is `nvbootctrl verify`. Two timers make the firmware's count mean
+"the device-agent has not marked the updated slot good"
+(`/usr/lib/ironflockos/tegra-slot-trial`):
+
+- `ironflockos-tegra-keep.timer`, two minutes after `multi-user.target`: a
+  slot that is not on trial (a fresh flash, a slot the agent marked good, the
+  slot an update came from) is marked good through RAUC. Restarts without a
+  connection never use it up: unlike GRUB, which starts over with a good slot
+  when all were tried, NVIDIA's firmware ends in the recovery kernel. On the
+  slot on trial the boot is counted instead (`trial-boots`).
+- `ironflockos-tegra-trial.timer`, 15 minutes after `multi-user.target`: a
+  slot on trial that has not been marked good is rebooted (`systemctl
+  reboot`, warm; the hardware watchdog resets a system that hangs). Only a
+  boot that the first timer has counted, and at most three times.
+- From the fourth counted boot of a slot on trial (the firmware did not fall
+  back, for example because the boots were cold), the first timer marks it
+  bad through RAUC, which hands the next boot to the slot the update came
+  from, and reboots once. If RAUC refuses (that slot is not known good), the
+  trial ends and the slot on trial stays.
+- After the firmware fell back from a trial, the first timer ends the trial;
+  the slot tried reads as bad.
+
+The cases:
+
+| Case | What happens |
+|------|--------------|
+| The updated slot does not boot (kernel panic, root not mounted) | `panic=10` reboots warm; after three boots the firmware marks the slot unbootable and boots the slot the update came from, which is kept. The agent there reports the rollback |
+| The updated slot boots, the agent never marks it good | rebooted 15 minutes after each boot; after three boots the firmware falls back, as above. At most about 45 minutes on the new slot |
+| No network at all after an update | as above: the update does not stay, the device returns to the slot it came from and stays there, kept by the first timer. The platform can offer the update again later |
+| No network on a slot that is not on trial (a fresh flash, a proven slot) | nothing is rebooted; the slot is kept two minutes after every boot and never falls back by counting |
+| A power cut during the trial | the cold boot gives the slot its three tries again, so the firmware does not count it; the trial's own count does. From the fourth counted boot the device returns to the slot it came from, at most once |
+| A power cut while RAUC writes the slot | the slot was marked unbootable before the write and the running slot is still the next boot: the device boots the old slot |
+| The agent marks the slot good | `nvbootctrl verify`; the trial ends and the slot stays |
+
+A device never loops: each trial ends after at most three timed reboots plus
+one return, and a slot not on trial is never rebooted by the gate.
+
+### What nvbootctrl r39.2.1 does
+
+Nobody could run the tool on a module for this work. What the backend relies
+on, and where it comes from:
+
+| Fact | Source |
+|------|--------|
+| `nvbootctrl` is `/usr/sbin/nvbootctrl` in `nvidia-l4t-bootloader-utils` 39.2.1-20260806224157, an arm64 ELF binary | the package, unpacked |
+| commands: `get-number-slots`, `get-current-slot`, `set-active-boot-slot SLOT` (zero-based), `dump-slots-info`, `verify`, `verify-bl`, `is-rootfs-ab-enabled` (says "not implemented"); option `-t bootloader\|rootfs`. No `mark-boot-successful`, `set-slot-as-unbootable` or `get-suffix` (older releases had them) | the binary's usage text (`strings`) |
+| `-t rootfs dump-slots-info` prints `Current rootfs slot: %s`, `Active rootfs slot: %s`, `num_slots: %d`, and per slot `slot: %d,             retry_count: %d,             status: %s` with `normal` or `unbootable`; `RootFS A/B is not enabled.` without rootfs A/B | the binary's format strings; the slot letters as NVIDIA's `nv-l4t-bootloader-update.sh` reads the bootloader's line with the same format (`awk '{print $4}'` gives `A` or `B`) |
+| the variables it reads and writes: `RootfsStatusSlotA`/`B`, `RootfsRetryCountMax`, `RootfsRedundancyLevel`, `BootChainFwCurrent`, `BootChainFwNext`, `BootChainFwStatus`, `BootChainOsCurrent`, GUID `781e084c-a330-417c-b678-38e696380cb9`; `chattr -i`/`+i` around writes; the scratch register fields `rootfs_retry_count_a`/`_b`, `rootfs_current`, `rootfs_sr_magic` | the binary's strings |
+| status values `0` normal, `0xFF` unbootable; attributes non-volatile, boot service and runtime access; the counting, the fallback and the recovery kernel as described above | edk2-nvidia `r39.2.1-updates`: `L4TRootfsValidation.c`, `NVIDIAConfiguration.h`, `BootChainDxe.c`, `L4TLauncher.c` (BSD-2-Clause-Patent, read on GitHub) |
+| the retry count is in a scratch register, initialised at cold boot, cleared by `nvbootctrl verify` (through `nv-l4t-bootloader-config`) | NVIDIA's developer guide, "Root File System Redundancy" (r36.4 and r38.2) |
+| NVIDIA's update engine marks a slot unbootable before it writes it, then sets it active | `nv_update_engine`'s strings (`nvidia-l4t-tools`) |
+
+Inferred, not proven: the exit codes (0 on success), the output of `set-active-boot-slot`, whether it makes an unbootable slot bootable itself or refuses it (the backend writes the variable first, so either works), that `set-active-boot-slot` sets `BootChainFwNext` and that the active slot then reads as that slot. The unit tests (`test/unit/tegra-rootfs-ab.bats`) run against a fake `nvbootctrl` with fixtures in this format (`test/unit/fixtures/nvbootctrl`, written by hand; nothing in them is NVIDIA's).
+
+### To prove on a module (WP-6.6)
+
+- `nvbootctrl -t rootfs dump-slots-info` prints what the fixtures hold, and
+  `get-current-slot` agrees with `rauc.slot=`.
+- The flash with `ROOTFS_AB=1` sets `RootfsRedundancyLevel` 1 and creates
+  `RootfsStatusSlotA`/`B` (the flash package, WP-6.4).
+- efivarfs is mounted read-write and the backend's writes of
+  `RootfsStatusSlot` reach the firmware; `nvbootctrl` works with
+  IronFlockOS's kernel and without `/etc/nv_boot_control.conf` (it falls back
+  to the device tree for the chip id), or the flash package adds the file.
+- `systemctl reboot`, a kernel panic and the hardware watchdog are warm
+  resets that keep the scratch register; a power cut is cold.
+- The A/B switch: `rauc install`, reboot, the agent marks the slot good,
+  `rauc status` shows it booted and primary.
+- The forced fallback: install a bundle whose slot panics (for example with
+  `init=/bin/false` in its `extlinux.conf`); after three boots the module is
+  back on the old slot, and `rauc status` shows the new one bad. And the same
+  with a slot that boots but has no network.
 
 ## Partition layout
 
@@ -154,22 +319,34 @@ with `--no-flash`.
 
 ## Tests
 
+`test/unit/tegra-rootfs-ab.bats` tests the backend and the health gate
+without a module: every command of the backend in every state and failure,
+against a fake `nvbootctrl` and fake efivarfs files, and the cases above
+against a model of NVIDIA's firmware that counts boots as
+`L4TRootfsValidation.c` does. `test/unit/jetson.bats` checks the target's
+files.
+
 `just build jetson-orin base` builds the image and leaves the tree in
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
 `sudo test/image/jetson-rootfs-check.sh <work>/ironflockos-jetson-orin-base/rootfs`
 checks it: the versions, the sources and pins, kernel, initrd and `nvgpu`,
-units and masks, the baked agent and the `nvidia` runtime. It also runs the
-tree's binaries in a chroot: dpkg and apt consistency, systemd, Docker,
-containerd, RAUC, `ironflock`, `nvidia-ctk` and `nvidia-container-cli`.
-CI runs both on every pull request (`jetson-rootfs` in `ci.yml`), and makes
-the flash package from the image (`jetson-flash`, above).
+units and masks, the RAUC backend and the health gate's timers, the baked
+agent and the `nvidia` runtime. It also runs the tree's binaries in a chroot:
+dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
+`ironflock`, `nvidia-ctk` and `nvidia-container-cli`. CI runs both on every
+pull request (`jetson-rootfs` in `ci.yml`, with the bundle), and makes the
+flash package from the image (`jetson-flash`, above). Both jobs run when the
+repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
 
 ## Open points
 
-- `/etc/nv_boot_control.conf`, which `nvbootctrl` needs: `flash.sh` writes
-  it for the module into the BSP's `rootfs/`, and with `-r` it does not reach
-  the slot images. The flash package has to put it into APP and APP_b
-  (WP-6.4).
+- `/etc/nv_boot_control.conf`: `flash.sh` writes it for the module into the
+  BSP's `rootfs/`, and with `-r` it does not reach the slot images.
+  `nvbootctrl` reads the chip id from it and falls back to the device tree
+  without it (its strings); NVIDIA's OTA tools and capsule scripts need it.
+  The flash package has to put it into APP and APP_b (WP-6.4), and updates
+  have to keep it.
+- The A/B switch and the forced fallback on a module (WP-6.6, above).
 - The internal storage (QSPI) images: `--external-only` leaves them out. A
   module needs them once (r39 bootloader; NVIDIA's two-step `--no-flash
   --reuse ... internal`, then `--external-only --append`) (WP-6.4).

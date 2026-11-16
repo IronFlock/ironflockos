@@ -181,6 +181,19 @@ within those two minutes still falls back. A device that never
 reaches the platform keeps booting its good slot: when every slot has been
 tried, GRUB starts over with the first good one.
 
+The Raspberry Pi and Jetson have no GRUB; RAUC switches their slots through a
+`custom` backend, and the device-agent's mark is the health gate there too.
+On the Pi, `rpi-tryboot` arms the firmware's tryboot, which tries an updated
+slot once; marking it good makes it the primary
+([rpi-arm64.md](targets/rpi-arm64.md)). On Jetson, `tegra-rootfs-ab` sets the
+next slot with `nvbootctrl -t rootfs` and NVIDIA's `RootfsStatusSlotA/B`
+variables, and marking the running slot good is `nvbootctrl verify`. NVIDIA's
+firmware falls back after three warm boots nobody verified, and ends in its
+recovery kernel when both slots are given up. So `tegra-slot-trial` keeps every
+slot that is not on trial two minutes after each boot, and reboots an updated
+slot that the agent has not marked good within 15 minutes, at most three times,
+until the firmware falls back ([jetson-orin.md](targets/jetson-orin.md#ab-with-nvbootctrl)).
+
 `IRONFLOCKOS_CMDLINE` in `grubenv` appends kernel parameters on both slots, for
 diagnosis in the field (`grub-editenv /boot/efi/EFI/BOOT/grubenv set
 IRONFLOCKOS_CMDLINE=...`) and for the QEMU tests. `IRONFLOCKOS_BOOT=text`

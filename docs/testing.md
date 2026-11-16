@@ -44,8 +44,11 @@ The network profiles (`network-profiles.bats`) run against folders that stand
 for the IRONFLOCKOS partition and `/data/network/connections`, with every rule a
 profile has to meet. The trusted CAs (`ca.bats`) run against folders that
 stand for the IRONFLOCKOS partition, `/data` and the trust store, with a fake
-`update-ca-certificates` and certificates that `openssl` makes. They need bash,
-bats and openssl only:
+`update-ca-certificates` and certificates that `openssl` makes. The RAUC
+backends of the Raspberry Pi (`rpi-tryboot.bats`) and of Jetson
+(`tegra-rootfs-ab.bats`, with its health gate) run against fakes of the
+firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
+checks"). They need bash, bats and openssl only:
 
 ```sh
 just test
@@ -493,15 +496,28 @@ its disk (WP-6.2). CI builds slot A's filesystem image and the bundle with
 `just build jetson-orin base` on the arm64 runner and runs
 `sudo test/image/jetson-rootfs-check.sh <tree>`. The script checks the L4T
 packages at the pinned versions, the Ubuntu, Docker and NVIDIA sources with
-the pins, kernel, initrd and `nvgpu`, the RAUC slots, units and masks, the
-baked agent and Docker's `nvidia` runtime. It also runs the tree's binaries in
-a chroot (`docs/targets/jetson-orin.md`). It needs root and an arm64 host.
-The `jetson-flash` job then makes the flash package from the image with
-NVIDIA's tools on an x86_64 runner (`build/tegra-flash-package.sh`): the dry
-run that the layout and the slot images pass the BSP's checks.
+the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
+`nvbootctrl` and the health gate's timers, units and masks (NVIDIA's
+`nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
+agent and Docker's `nvidia` runtime. It also runs the tree's binaries in a
+chroot, the backend among them (`docs/targets/jetson-orin.md`). It needs root
+and an arm64 host. The `jetson-flash` job then makes the flash package from
+the image with NVIDIA's tools on an x86_64 runner
+(`build/tegra-flash-package.sh`): the dry run that the layout and the slot
+images pass the BSP's checks.
 
-Both jobs are switched off for now to save CI time, until the Jetson work
-continues. `ci.yml` says how to switch them on.
+The backend's logic is covered by `test/unit/tegra-rootfs-ab.bats`: every
+command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
+`test/unit/fixtures/nvbootctrl`, written from the tool's format strings, as
+nobody has recorded them on a module yet) and fake efivarfs files, and the
+update cases (marked good, never marked good, does not boot, power cuts, no
+slot known good, no `/data`) against a model of NVIDIA's firmware that counts
+boots as its source does. The A/B switch and the forced fallback on a module
+are the hardware checklist (WP-6.6).
+
+Both jobs run on every pull request when the repository variable `JETSON_CI`
+is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs
+them: without the variable no pull request gets `ci-ok`.
 
 ## Hardware checklist
 
