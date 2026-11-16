@@ -14,6 +14,10 @@
 #                             (what the tool may do; the backend must not
 #                             depend on either answer)
 #   ignore-set-active         set-active-boot-slot succeeds but changes nothing
+#   bl_status_A, bl_status_B  the bootloader slots' status (normal or
+#                             unbootable) for `dump-slots-info` without -t
+#                             (the bootloader's view, tegra-capsule); without
+#                             them that command fails
 set -eu
 m=${FAKE_NV:?}
 guid=781e084c-a330-417c-b678-38e696380cb9
@@ -38,8 +42,20 @@ if [ "${1:-}" = -t ]; then
   target=$2
   shift 2
 fi
+if [ "$target" = bootloader ] && [ "${1:-}" = dump-slots-info ]; then
+  [ -e "$m/bl_status_A" ] || {
+    echo "Error: failed to get current fw version"
+    exit 1
+  }
+  printf 'Current bootloader slot: %s\n' "$(cat "$m/current")"
+  printf 'Active bootloader slot: %s\n' "$(cat "$m/active")"
+  printf 'num_slots: 2\n'
+  printf 'slot: %d,             status: %s\n' 0 "$(cat "$m/bl_status_A")"
+  printf 'slot: %d,             status: %s\n' 1 "$(cat "$m/bl_status_B")"
+  exit 0
+fi
 [ "$target" = rootfs ] || [ "${1:-}" = verify ] || {
-  echo "fake-nvbootctrl: only -t rootfs and verify" >&2
+  echo "fake-nvbootctrl: only -t rootfs, verify and the bootloader's dump-slots-info" >&2
   exit 2
 }
 if [ "$target" = rootfs ] && [ -e "$m/ab-disabled" ]; then

@@ -1,3 +1,5 @@
-# Jetson's health gate (docs/targets/jetson-orin.md): named here, so the first
-# boot of every slot keeps the timer on (10-ironflockos-device.preset).
+# Jetson's health gate (docs/targets/jetson-orin.md) and the boot firmware
+# report: named here, so the first boot of every slot keeps them on
+# (10-ironflockos-device.preset).
 enable ironflockos-tegra-keep.timer
+enable ironflockos-tegra-capsule.service

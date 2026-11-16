@@ -15,4 +15,9 @@ lines (`awk '{print $4}'` gives A or B). Nothing here is NVIDIA's.
 - dump-slots-info.ab-disabled: a module flashed without rootfs A/B.
 
 fake-nvbootctrl answers the commands the backend uses from a model of the
-module (fake-nvbootctrl's header) and prints the same format.
+module (fake-nvbootctrl's header) and prints the same format. For
+tegra-capsule (WP-6.5) it also prints the bootloader's dump-slots-info, from
+the format strings `Current bootloader slot: %s`, `Active bootloader slot:
+%s`, `num_slots: 2` and `slot: %d,             status: %s`; which status
+words other than `normal` the tool prints is not known, and tegra-capsule
+treats every other word as a failed chain.

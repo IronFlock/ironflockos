@@ -41,10 +41,10 @@ setup() {
 @test "the package list is Orin's L4T flavour, without what the build replaces" {
   mapfile -t pkgs < <(read_list "$t/packages")
   for p in nvidia-l4t-core nvidia-l4t-kernel nvidia-l4t-kernel-nvgpu nvidia-l4t-kernel-oot-modules \
-    nvidia-l4t-initrd nvidia-l4t-cuda-nvgpu nvidia-l4t-bootloader-utils nvidia-container-toolkit; do
+    nvidia-l4t-initrd nvidia-l4t-cuda-nvgpu nvidia-l4t-bootloader-utils nvidia-l4t-bootloader nvidia-container-toolkit; do
     printf '%s\n' "${pkgs[@]}" | grep -qx "$p"
   done
-  ! printf '%s\n' "${pkgs[@]}" | grep -qE -- '-openrm$|^nvidia-l4t-(bootloader|extlinux|apt-source|configs)$|^linux-image-'
+  ! printf '%s\n' "${pkgs[@]}" | grep -qE -- '-openrm$|^nvidia-l4t-(extlinux|apt-source|configs)$|^linux-image-'
 }
 
 @test "mkrootfs pins every listed L4T package and keeps NVIDIA's archive below Ubuntu" {
@@ -78,7 +78,8 @@ setup() {
   grep -qx 'enable ironflockos-tegra-keep.timer' "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
   grep -q 'enable ironflockos-tegra-keep.timer$' "$repo/build/customize.sh"
   # No timer restarts a slot on trial: it gets one boot, as on the EFI targets.
-  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
+  # The boot firmware report runs once per boot (WP-6.5).
+  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-capsule.service\nironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
   # NVIDIA's unit that would verify every boot stays masked.
   grep -q 'mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service' "$repo/build/customize.sh"
 }

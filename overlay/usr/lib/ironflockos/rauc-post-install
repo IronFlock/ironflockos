@@ -6,16 +6,22 @@
 #   client id; hostname is what ironflock enroll or the platform set; and a
 #   factory reset's state, so a request done or given up stays so; on Jetson
 #   its /boot/extlinux/extlinux.conf gets root= and rauc.slot= of that slot
-#   (WP-6.2), as the bundle's names slot A;
+#   (WP-6.2), as the bundle's names slot A, the slot keeps the module's
+#   /etc/nv_boot_control.conf, and tegra-capsule stages NVIDIA's boot
+#   firmware capsule when the slot needs firmware its boot chain lacks, or
+#   refuses the slot when that cannot be done (WP-6.5);
 # - a Raspberry Pi boot partition (class boot, WP-5.2) gets a cmdline.txt
 #   that mounts its own root slot: the bundle's names slot A.
 set -eu
 
-files="/etc/machine-id /etc/hostname"
+# nv_boot_control.conf: the module's board specs, which NVIDIA's flash
+# writes once (Jetson).
+files="/etc/machine-id /etc/hostname /etc/nv_boot_control.conf"
 reset_state=${IRONFLOCKOS_RESET_STATE:-/var/lib/ironflockos/factory-reset.state}
 prefix=${RAUC_MOUNT_PREFIX:-/run/rauc}
 cmdline_tool=${IRONFLOCKOS_RPI_CMDLINE:-/usr/lib/ironflockos/rpi-cmdline}
 extlinux_tool=${IRONFLOCKOS_TEGRA_EXTLINUX:-/usr/lib/ironflockos/tegra-extlinux}
+capsule_tool=${IRONFLOCKOS_TEGRA_CAPSULE:-/usr/lib/ironflockos/tegra-capsule}
 
 fail() {
   echo "rauc-post-install: $*" >&2
@@ -64,6 +70,11 @@ for i in ${RAUC_TARGET_SLOTS:-}; do
         # shellcheck disable=SC2154 # assigned by the eval above
         "$extlinux_tool" "$mnt/boot/extlinux/extlinux.conf" "$partuuid" "$bootname"
         extlinux=", extlinux.conf mounts slot $bootname (PARTUUID=$partuuid)"
+        # The boot firmware the slot was built for (lock-step rule): staged,
+        # not needed, or the install fails and the slot is not switched to.
+        if [ -x "$capsule_tool" ]; then
+          "$capsule_tool" stage "$bootname" "$mnt" || fail "slot $bootname needs boot firmware that cannot be staged"
+        fi
       fi
       unmount_slot
       echo "rauc-post-install: copied machine-id and hostname to slot $i ($device)$extlinux"
