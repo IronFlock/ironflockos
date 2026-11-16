@@ -548,4 +548,67 @@ WP-4b.2, WP-5.4, WP-6.6):
     enrolls, the agent reaches the appliance, an app's image pulls from its
     registry, and an OS update downloads from its mirror. After the update the
     device still reaches the appliance.
-13. Target-specific items in `docs/targets/<target>.md`.
+13. The screen (`docs/build.md`, "The screen"), on a board with a screen, a
+    USB keyboard plugged in, and the kiosk app or another screen app
+    installed where there is one. Two people: one at the machine with a
+    phone that records video, one at a root shell on the device (the
+    agent's terminal in Studio, or SSH). The shell runs
+    `/usr/lib/ironflockos/screen-report`, which reads this boot and changes
+    nothing; with the screen app, `--app NAME` adds when its container
+    started (NAME: a part of its container's name). Without a person at the
+    machine only the reports are done. In this order, about 20 minutes:
+    1. Cold start. Shut down, cut the power for ten seconds, start
+       recording with the screen and the power switch in the picture, and
+       switch on. Record until the screen app's UI shows, or 30 seconds
+       past the splash without one. The recording must show the
+       firmware's picture, then the splash's colour (black by default),
+       then the splash (IronFlock's logo or the device's picture, faded
+       in), then the UI: no text line and no picture that goes and comes
+       back. Note any black between the colour and the picture, and how
+       long it lasts (Intel's driver should keep the colour). Then the
+       shell runs the report (`--app NAME` with a screen app). Its power-on
+       times need this cold start.
+    2. Esc in GRUB. Restart (`systemctl reboot`). When the firmware's
+       picture gives way to the splash's colour, press Esc once (GRUB waits
+       two seconds): its menu shows the slot, its fallback once the other
+       slot is good, "Start with messages" and "Firmware setup". If the
+       firmware's own menu opens instead, note it and leave it. Choose
+       "Start with messages": this boot shows its messages and ends at a
+       login prompt on tty1.
+    3. Esc during the boot. Restart. A few seconds after the picture
+       shows, press Esc: the boot messages; Esc again: the splash. In the
+       initramfs, the first seconds, Esc shows nothing (Known limits of
+       `docs/kiosk-plan.md`).
+    4. The terminals. After the boot, Ctrl+Alt+F2: a login prompt; with a
+       console password set, log in with it and log out. Ctrl+Alt+F1: back
+       to the UI, or without a screen app to what tty2 left there.
+    5. The firmware's setup. Restart and press the PC's own setup key (its
+       manual names it, often Del or F2) during the firmware's picture: the
+       setup opens. Leave it without saving. Restart, Esc in GRUB, choose
+       "Firmware setup": the setup opens again. Note the key, and whether
+       the menu entry was there.
+    6. Touch. With the UI on the screen, tap a control near each corner and
+       one in the middle, and swipe a list: each reacts where the finger
+       is, not offset or mirrored. The report's "Input" lists the touch
+       screen and the keyboard with `ID_INPUT_TOUCHSCREEN` and
+       `ID_INPUT_KEYBOARD`.
+    7. A new splash picture. The screen app hands one over (or the shell
+       writes a PNG under another name in `/data/ironflockos/screen`,
+       syncs it and renames it to `splash.png`, with a `splash.conf` that
+       sets another `background=`). `journalctl -u ironflockos-splash` says
+       "the splash from the next boot on". Restart and record: GRUB's new
+       colour, then the new picture centred on it, no IronFlock logo in
+       between. Then the report.
+    8. An OS update (item 6 above). Record the restart into the new slot:
+       as in step 1, the device's own picture. Then the report: the other
+       slot, the same splash.
+    9. Shutdown. With the UI on the screen, `systemctl poweroff`. Record
+       until the screen is dark, and note what it showed meanwhile: the
+       app's last frame, black, or the splash.
+
+    Send back the recordings, or the times read from them (power-on to the
+    firmware's picture, to the colour, to the picture, to the UI); each
+    report as text; and per step a line: as described, or what differed.
+    `--screenshot FILE` adds the framebuffer device's picture as a PPM
+    (`gzip` it, 6 MB at 1920x1080); a photo of the screen does as well.
+14. Target-specific items in `docs/targets/<target>.md`.

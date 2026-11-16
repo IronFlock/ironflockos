@@ -872,6 +872,26 @@ with 0.16.0 or earlier keeps booting on text after an update to a release
 with the splash; it gets `ironflockos-splash`, which writes an archive its
 `grub.cfg` never loads.
 
+**The screen report.** `/usr/lib/ironflockos/screen-report [--app NAME]
+[--screenshot FILE]`, run by hand as root, prints what this boot did on
+the screen, for the hardware checklist (`docs/testing.md`, item 13): the
+image, slot, kernel, board and firmware; the boot's times after the
+kernel started (systemd's start in the root filesystem, Plymouth's start
+from keep-splash's journal line, keep-splash's takeover, the enrollment,
+Docker, the device-agent, the first container and, with `--app`, the
+container whose name contains NAME, from its process's start), and after
+the reset where the firmware has ACPI's FPDT (GRUB gives systemd no
+times); the graphics driver, connectors, modes and framebuffer device
+(debugfs, sysfs, `FBIOGET_VSCREENINFO`); the share of the framebuffer
+device's pixels in the splash's colour and where the rest is, against the
+picture's place; whether the framebuffer device is what the screen shows
+(no plane in debugfs shows a framebuffer that a program made); the input
+devices with udev's `ID_INPUT*`; the keys' setup; and the splash's
+services and last refusal. It changes nothing; `--screenshot` writes the
+framebuffer device's picture to FILE as a PPM. What a device cannot say,
+such as the firmware's times without FPDT, it reports as not available.
+No unit runs it.
+
 ## The nvidia variant
 
 `nvidia` is `base` plus NVIDIA's driver for containers on amd64 (WP-4.1;
