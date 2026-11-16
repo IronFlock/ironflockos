@@ -3011,6 +3011,50 @@ class Runner:
             raise TestFailure(f"booted {self.booted()}: an untested slot A must fall back to B")
         self.vm.run("rauc status mark-good")
 
+    def screen_report(self):
+        """WP-8.6's report (/usr/lib/ironflockos/screen-report, docs/testing.md
+        "Hardware checklist") on the boot with the splash that the screen
+        steps left: it exits 0; Plymouth started before the initramfs ended
+        and keep-splash took the screen over after; the framebuffer device is
+        what the screen shows, at the screen's size; the splash's background
+        is most of it, and enrolled (no message below the picture) the rest is
+        inside the picture's place; and its --screenshot is the screen, pixel
+        for pixel."""
+        cmdline = self.vm.run("cat /proc/cmdline").split()
+        if "splash" not in cmdline:
+            raise TestFailure(f"the report needs a boot with the splash: {' '.join(cmdline)}")
+        width, height, px = self.vm.screen_qmp().screen(os.path.join(self.vm.workdir, "screendump.ppm"))
+        shot = "/run/screen-report.ppm"
+        # perl reads the framebuffer pixel by pixel: minutes when emulated.
+        out = self.vm.run(f"/usr/lib/ironflockos/screen-report --screenshot {shot}", timeout=self.boot_timeout)
+        with open(os.path.join(self.vm.workdir, "screen-report.txt"), "w") as fh:
+            fh.write(out)
+        log(f"screen-report:\n{out}")
+
+        def at(event):
+            m = re.search(r"^ *(-?[0-9]+\.[0-9]+) +\S+  " + re.escape(event), out, re.M)
+            if not m:
+                raise TestFailure(f"the report has no time for {event!r}")
+            return float(m.group(1))
+
+        times = [at("Plymouth starts"), at("the initramfs ends"), at("keep-splash takes the screen over")]
+        if not 0 < times[0] < times[1] < times[2]:
+            raise TestFailure(f"Plymouth's start, the initramfs's end and keep-splash's takeover out of order: {times}")
+        if not re.search(rf"^framebuffer: /dev/fb0 .*, {width}x{height} shown of ", out, re.M):
+            raise TestFailure(f"the report's framebuffer is not the screen's {width}x{height}")
+        if not re.search(r"^shown: the framebuffer device: ", out, re.M):
+            raise TestFailure("the report does not find the framebuffer device on the screen")
+        m = re.search(r"^background #204060: ([0-9.]+) % of the (\d+) pixels$", out, re.M)
+        if not m or int(m.group(2)) != width * height or float(m.group(1)) < 90:
+            raise TestFailure("the report does not find the splash's background on 90 % of the screen")
+        if self.flock and not re.search(r"^the rest: .*: inside the splash's place$", out, re.M):
+            raise TestFailure("the report finds something outside the splash's picture")
+        got = self.vm.run(f"head -c 32 {shot} | head -n 3 | tr '\\n' ' '; tail -c {width * height * 3} {shot} | "
+                          f"sha256sum; rm {shot}").split()
+        if got[:4] != ["P6", str(width), str(height), "255"] or got[4] != hashlib.sha256(px).hexdigest():
+            save_screen((width, height, px), os.path.join(self.vm.workdir, "screen-report-screendump.png"))
+            raise TestFailure(f"the report's screenshot is not the screen (header and checksum: {got[:5]})")
+
     def wait_for(self, command, timeout, what):
         deadline = time.time() + timeout
         while self.vm.run(f"{command}; echo rc=$?").strip().splitlines()[-1] != "rc=0":
@@ -3246,6 +3290,8 @@ def main():
                     + (", the console password on tty2" if flock else ""), runner.usual_keys)
         runner.step("GRUB's colour: the splash's background before the kernel, then nothing but it and the splash",
                     runner.grub_splash)
+        runner.step("screen report: the times, the framebuffer and its picture of a boot with the splash",
+                    runner.screen_report)
         if args.only != "boot":
             runner.step("update into slot B; ironflock os refuses while RAUC installs and while the update waits, "
                         "os reset also before B is marked good", runner.update_to_b)
