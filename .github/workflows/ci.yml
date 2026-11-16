@@ -230,8 +230,11 @@ jobs:
         env:
           IRONFLOCKOS_WORK: /mnt/ironflockos-work
         run: just build jetson-orin base
+      # With the bundle: it carries the boot firmware lane's files (WP-6.5).
       - name: jetson-rootfs-check
-        run: sudo test/image/jetson-rootfs-check.sh /mnt/ironflockos-work/ironflockos-jetson-orin-base/rootfs
+        run: |
+          bundles=(out/ironflockos-jetson-orin-base/*.raucb)
+          sudo test/image/jetson-rootfs-check.sh /mnt/ironflockos-work/ironflockos-jetson-orin-base/rootfs "${bundles[0]}"
       - name: upload the slot image, bundle, package list and os-release
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
