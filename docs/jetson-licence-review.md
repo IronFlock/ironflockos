@@ -33,6 +33,7 @@ texts were read from the files NVIDIA ships, not from summaries.
 |----------|----------------|---------|-------|
 | Slot image `<image-id>-<version>.rootfs.ext4.zst` and bundle `.raucb` | The `nvidia-l4t-*` packages the target lists and their dependencies, and the container toolkit, installed by dpkg from NVIDIA's repositories | Download server `ironflockos/<version>/`, appliance OS mirror, FlockFlasher, the device-agent | Built in CI (WP-6.2) |
 | Flash package | Bootloader binaries, BCTs and partition images that NVIDIA's tools make from the BSP; NVIDIA's host flash tools; two NVIDIA scripts with IronFlockOS's `-r` fix; the layout `build/tegra-layout.py` makes from NVIDIA's XML | Planned for the release matrix (WP-6.4) | Built in CI, not published |
+| Flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` | None: IronFlockOS's scripts, which download the BSP and the Agreement from NVIDIA on the user's host (point 4) | Download server `ironflockos/<version>/`, with the first Jetson release | Built in CI (WP-6.4), not published |
 | Orin Nano SD image | The same for an SD card: kernel, DTB, ESP with L4TLauncher, recovery | FlockFlasher (WP-6.4) | Planned |
 | QSPI capsule `TEGRA_BL.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule | Inside the bundle (WP-6.5) | Planned |
 | Repository | `targets/jetson-orin/apt/jetson-ota-public.asc`, NVIDIA's key file with the header `LicenseRef-NvidiaProprietary` | GitHub, public, Apache-2.0 | Now |
@@ -116,7 +117,12 @@ uses Canonical's binaries from `ports.ubuntu.com`.
    slot image. The user gets the BSP from NVIDIA under the Agreement. IronFlockOS then
    distributes no NVIDIA-made bootloader images, no changed NVIDIA scripts and no
    derived layout. IronFlockOS publishes the package itself only if legal answers
-   questions 1 and 2 with yes (WP-6.4).
+   questions 1 and 2 with yes (WP-6.4). As built (WP-6.4): the kit also downloads the
+   Agreement from NVIDIA (`Tegra_Software_License_Agreement-Tegra-Linux.txt` next to the
+   BSP, pinned by SHA-256 in `bsp.conf` and checked against NVIDIA's SHA-1 list), shows it
+   and asks for acceptance before it unpacks or runs anything of NVIDIA's;
+   `--accept-nvidia-license` accepts it without the question and still prints it
+   (question 3). The kit holds no file of NVIDIA's.
 5. **The Orin Nano SD image waits for question 1.** It holds partition images that
    NVIDIA's tools make. If the answer is no, the developer kit also uses the flash kit
    (WP-6.4).

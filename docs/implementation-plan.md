@@ -9,9 +9,9 @@ reference for *why*.
 Status as of 2026-11-16. The latest release is `v0.17.0` (2026-11-12), on the `test` and
 the `production` channel. Phase 0 is complete. The code of every work package up to Phase 5
 is written except WP-2.9 (platform firmware inventory). Jetson has its BSP, root tree and
-layout (WP-6.1, WP-6.2) and its A/B backend with the health gate (WP-6.3, not yet run
-on a module), but not yet its images or capsule lane (WP-6.4, WP-6.5); its CI jobs,
-switched off by #201, are back with WP-6.3. What remains
+layout (WP-6.1, WP-6.2), its A/B backend with the health gate (WP-6.3) and the flash
+kit (WP-6.4), none yet run on a module, but not yet its capsule lane (WP-6.5); its CI
+jobs, switched off by #201, are back with WP-6.3. What remains
 elsewhere is acceptance on real devices, starting with the x86 IPC (WP-1.9) that `v1.0.0`
 (WP-2.10, milestone M3) needs.
 
@@ -104,7 +104,7 @@ decision), in progress.
 | 6.1 | BSP decision, download and cache | ironflockos | 2 | | done (#164, ADR-0008 accepted; licence review 2026-11-07, [jetson-licence-review.md](jetson-licence-review.md)) |
 | 6.2 | `jetson-orin` rootfs and layout | ironflockos | 6 | 6.1, 2.3 | done (#171, #173, #174, #177) |
 | 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | built (`tegra-rootfs-ab`, `tegra-slot-trial`, unit tests against `nvbootctrl`'s format; the Jetson CI jobs are back in `ci-ok`, behind `JETSON_CI`); open: the A/B switch and the forced fallback on a module (WP-6.6) |
-| 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | open (licence review: a flash kit for users; the package and the SD image published only after WP-6.8 allows it) |
+| 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | built: the flash kit (`build/jetson-flash.sh`, packed by `build/jetson-flash-kit.sh`), run in CI with `--no-flash` up to the flash itself, and host-side flashing in the target docs; open: the flash of a real module (WP-6.6), the kit's publication with the first Jetson release, and the SD image and the package's publication, both only if WP-6.8 allows them |
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | open (licence review: NVIDIA's own capsules from `nvidia-l4t-bootloader`) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
 | 6.7 | Follow-up: Jetson RT kernel | ironflockos | 5 | 6.6, 4b.1 | open |
@@ -687,6 +687,22 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
 - Acceptance: the flash kit flashes an Orin NX from a Linux host with the module in
   recovery mode, with nothing from NVIDIA except what it downloads from NVIDIA; if the
   SD image is in, it boots a Nano devkit to `ironflockos-enroll`.
+- As built: the kit is `ironflockos-jetson-flash-kit-<version>.tar.gz`, IronFlockOS's
+  scripts only (`build/jetson-flash.sh` as `ironflockos-jetson-flash`, with
+  `fetch-bsp.sh`, `tegra-flash-package.sh`, `tegra-flash-flock.sh`, the layout tool,
+  `bsp.conf` and the catalog key). It downloads NVIDIA's Agreement from NVIDIA, checked
+  against a pin in `bsp.conf`, and asks for acceptance (or `--accept-nvidia-license`)
+  before anything of NVIDIA's is unpacked or run; takes the slot image through the signed
+  catalog (or `--image` with `--sha256`); fetches and checks the BSP; makes the package
+  in NVIDIA's two runs for rootfs A/B on NVMe, the QSPI images first, which the package
+  of WP-6.2 lacked (`--external-only` alone gives a module no QSPI firmware and no rootfs
+  A/B setting); puts the `.flock` on the package's ESP and takes it off again at the end;
+  and runs NVIDIA's `--flash-only`. Boards: the Orin Nano/NX and AGX Orin developer kit
+  configurations, NVMe only. CI packs the kit and runs it from the archive with
+  `--no-flash` (`jetson-flash`). `/etc/nv_boot_control.conf` stays out of the slots: the
+  device has to write it at boot, with WP-6.5. No release publishes the kit before
+  WP-6.8 (`docs/release.md`, "Not yet"); the Nano devkit uses the kit, as the SD image
+  waits for WP-6.8's question 1.
 
 ### WP-6.5 Jetson QSPI capsule lane (3 days)
 

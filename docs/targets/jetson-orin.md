@@ -5,11 +5,15 @@ NVIDIA Jetson AGX Orin, Orin NX and Orin Nano on Jetson Linux r39.2.1 (JetPack
 CI builds slot A's filesystem image and the RAUC bundle, checks the root tree
 and makes the flash package without a module (WP-6.2). The RAUC backend over
 `nvbootctrl` and the health gate are built and unit-tested (WP-6.3); nobody
-has run them on a module yet. Still to come:
+has run them on a module yet. The flash kit is built and runs in CI up to
+the flash itself (WP-6.4, [Flashing a module](#flashing-a-module)); nobody
+has flashed a module with it yet. Still to come:
 
-- the flash kit and the SD image (WP-6.4);
 - the QSPI lane (WP-6.5);
-- the A/B switch and the forced fallback on a module (WP-6.6).
+- the first flash, the A/B switch and the forced fallback on a module (WP-6.6);
+- the Orin Nano Developer Kit's SD image, only if IronFlock's legal check
+  allows it (WP-6.8); until then the developer kit is flashed with the flash
+  kit too.
 
 | | |
 |---|---|
@@ -21,7 +25,7 @@ has run them on a module yet. Still to come:
 | Consoles | `ttyTCU0`, 115200 8N1 (the debug header), and the display (`tty0`) |
 | Slot size | 8 GiB (`base`); only the base variant |
 | Disk | NVIDIA's NVMe layout for rootfs A/B, plus `data` (see below); written by NVIDIA's flash tools |
-| Image | `<image-id>-<version>.rootfs.ext4.zst`, slot A's filesystem (APP), and the bundle `<image-id>-<version>.raucb` |
+| Image | `<image-id>-<version>.rootfs.ext4.zst`, slot A's filesystem (APP), and the bundle `<image-id>-<version>.raucb`; the flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` writes it to a module |
 
 ## Packages and pins
 
@@ -241,12 +245,16 @@ Inferred, not proven: the exit codes (0 on success), the output of `set-active-b
 
 - `nvbootctrl -t rootfs dump-slots-info` prints what the fixtures hold, and
   `get-current-slot` agrees with `rauc.slot=`.
-- The flash with `ROOTFS_AB=1` sets `RootfsRedundancyLevel` 1 and creates
-  `RootfsStatusSlotA`/`B` (the flash package, WP-6.4).
+- The flash kit's QSPI run (`ROOTFS_AB=1`, see [Flash package](#flash-package))
+  gives the firmware `RootfsRedundancyLevel` 1, and `RootfsStatusSlotA`/`B`
+  exist after the first boot (the firmware makes them, or the backend's
+  `set-primary` fails and says so). CI only records whether the QSPI images
+  name `RootfsRedundancyLevel`.
 - efivarfs is mounted read-write and the backend's writes of
   `RootfsStatusSlot` reach the firmware; `nvbootctrl` works with
   IronFlockOS's kernel and without `/etc/nv_boot_control.conf` (it falls back
-  to the device tree for the chip id), or the flash package adds the file.
+  to the device tree for the chip id). The flash package does not put the
+  file into the slots (see [Open points](#open-points)).
 - `systemctl reboot`, a kernel panic and the hardware watchdog are warm
   resets that keep the scratch register; a power cut is cold.
 - The A/B switch: `rauc install`, reboot, the agent marks the slot good,
@@ -292,10 +300,19 @@ command line.
 
 `build/tegra-flash-package.sh` makes the flash package of an Orin on NVMe on
 the flashing host (x86_64 Ubuntu with the BSP's
-`tools/l4t_flash_prerequisites.sh`), offline: no Jetson needs to be attached,
-the module is named by its board ID and SKU. It runs NVIDIA's
-`ROOTFS_AB=1 l4t_initrd_flash.sh --no-flash -r --external-device nvme0n1 -c <layout> --external-only <board> external`
-after preparing the unpacked BSP:
+`tools/l4t_flash_prerequisites.sh`). It follows NVIDIA's workflow for rootfs
+A/B on NVMe (Jetson Linux r39.2.1 Developer Guide, "Flashing Support"): two
+runs of `l4t_initrd_flash.sh --no-flash`, both with `ROOTFS_AB=1` and `-r`:
+
+```sh
+l4t_initrd_flash.sh --showlogs --no-flash -r -p "-c bootloader/generic/cfg/flash_t234_qspi.xml" --network usb0 <board> internal
+l4t_initrd_flash.sh --showlogs --no-flash -r --external-device nvme0n1 -c <layout> -S <slot size> --external-only --append --network usb0 <board> external
+```
+
+The first makes the QSPI firmware's images (`images/internal`): only the
+QSPI, also on an AGX Orin, whose eMMC is not written. With `ROOTFS_AB=1`
+NVIDIA's tools give its UEFI the rootfs A/B setting. The second adds the
+NVMe's (`images/external`), after preparing the unpacked BSP:
 
 - the layout from `build/tegra-layout.py`;
 - `bootloader/system.img` (APP) from the slot image, and `system.img_b`
@@ -313,16 +330,179 @@ after preparing the unpacked BSP:
   `l4t_create_images_for_kernel_flash.sh` declare it with an argument in
   their getopts strings, though it takes none, so it swallows the next option
   and every later option is lost. The script makes it a flag, and fails where
-  the BSP's string is not the known one.
+  the BSP's string is not the known one. With `-r` in both runs neither
+  builds `system.img` from the tree over the slot images.
 
-The package lands in the BSP's `tools/kernel_flash/images`: the external
-device's GPT and flash index, ESP, boot and recovery images, and APP/APP_b as
-NVIDIA's tarballs. `l4t_initrd_flash.sh --flash-only` writes it to a module in
-recovery mode (WP-6.4). CI makes it for an Orin Nano 8GB (`3767`/`0003`) on
-`jetson-orin-nano-devkit` on every pull request (`jetson-flash`), with the
-BSP tarball cached by its pin; there `l4t_initrd_flash.sh` gets an empty USB
-bus in a mount namespace of its own, as it fails where there is none even
-with `--no-flash`.
+The board's identity comes from the module, attached in recovery mode, as
+NVIDIA's tools read it. With a board ID and SKU on the command line the
+package is made offline instead, without a module (`FAB`, `BOARDREV`,
+`CHIP_SKU` and `RAMCODE` from the environment); CI does that.
+
+The package lands in the BSP's `tools/kernel_flash/images`: the QSPI images,
+and the NVMe's GPT and flash index, ESP, boot and recovery images, and
+APP/APP_b. `l4t_initrd_flash.sh --flash-only` writes it to a module in
+recovery mode. The flash kit does all of that on the user's host; IronFlockOS
+does not publish the package (licence review, point 4). CI makes it for an
+Orin Nano 8GB (`3767`/`0003`, chip SKU `00:00:00:D5`) on
+`jetson-orin-nano-devkit` on every pull request (`jetson-flash`), through the
+flash kit, with the BSP tarball cached by its pin; there
+`l4t_initrd_flash.sh` gets an empty USB bus in a mount namespace of its own,
+as it fails where there is none even with `--no-flash`.
+
+## Flashing a module
+
+A module is flashed from a Linux PC with the **flash kit**,
+`ironflockos-jetson-flash-kit-<version>.tar.gz`: IronFlockOS's own scripts
+and nothing of NVIDIA's (licence review, points 4 and 7). On the PC, the kit
+downloads the pinned Jetson Linux BSP from NVIDIA, makes the flash package
+with NVIDIA's tools from it and the IronFlockOS slot image, and writes the
+module's QSPI firmware and NVMe with NVIDIA's `l4t_initrd_flash.sh`. The
+Orin Nano Developer Kit is flashed the same way: it has no SD image of
+IronFlockOS (see the start of this page).
+
+CI packs the kit on every pull request (`build/jetson-flash-kit.sh`, the
+artifact `jetson-flash-kit` of the `jetson-flash` job). No release publishes
+it yet: no Jetson file is published before IronFlock's legal sign-off
+(ADR-0008, WP-6.8; see [release.md](../release.md#not-yet)). Until then,
+take the kit from that artifact, or run `build/jetson-flash.sh` from a clone
+of this repository; with no published image, give it the slot image of the
+`image-jetson-orin-base` artifact with `--image` and its line of that
+artifact's `SHA256SUMS` with `--sha256`.
+
+### What you need
+
+- A PC with an x86-64 CPU and **Ubuntu 22.04 or 24.04** (the host
+  distributions of Jetson Linux r39.2's release notes; the kit warns on
+  others), not a virtual machine, with internet access, `sudo`, and about
+  25 GB of free disk: the BSP tarball, its unpacked copy and the package.
+  NVIDIA's tools reach the module over USB networking and NFS on the IPv6
+  range `fc00:1:1::/48`; a firewall must let that through.
+- A USB cable from the PC to the carrier board's flashing port, without a
+  hub: the USB-C port next to the 40-pin header on the AGX Orin Developer
+  Kit, the USB-C port of the Orin Nano Developer Kit.
+- An NVMe drive in the carrier board's M.2 slot. The flash erases it, and
+  writes the module's QSPI firmware.
+- The device's `.flock` from IronFlock.
+
+The kit knows these boards (NVIDIA's board configurations of the BSP and
+NVIDIA's recovery-mode USB ids, from its Quick Start; on another carrier
+board, the configuration its maker names):
+
+| `--board` | Modules | Recovery USB id |
+|-----------|---------|-----------------|
+| `jetson-orin-nano-devkit` | Orin NX 16GB (P3767-0000) and 8GB (-0001), Orin Nano 8GB (-0003, -0005) and 4GB (-0004), on the Orin Nano Developer Kit carrier (P3768) | `0955:7323`, `7423`, `7523`, `7623` |
+| `jetson-orin-nano-devkit-super` | the same, with the Super power modes | the same |
+| `jetson-agx-orin-devkit` | AGX Orin (P3701-0000, -0004, -0005) on the AGX Orin Developer Kit carrier (P3737) | `0955:7023`, `7223` |
+| `jetson-agx-orin-devkit-super` | AGX Orin 32GB (P3701-0004), Super power modes | `0955:7223` |
+| `jetson-agx-orin-devkit-industrial` | AGX Orin Industrial (P3701-0008) | `0955:7023` |
+
+IronFlockOS goes onto the NVMe on every board. eMMC, USB drives and SD cards
+are not supported: `build/tegra-layout.py` knows NVIDIA's NVMe layout only.
+On an AGX Orin the eMMC keeps what it holds.
+
+### Step by step
+
+1. **Recovery mode.** Orin Nano Developer Kit carrier (Orin Nano, Orin NX):
+   unplug the power, put a jumper across the REC and GND pins of the button
+   header, plug the power in. AGX Orin Developer Kit: with it off, hold the
+   Force Recovery button, press and release Power, release Force Recovery.
+   Connect the flashing port to the PC. `lsusb -d 0955:` lists the module
+   with one of the ids above.
+2. **Unpack the kit and run it**, with the board and the device's `.flock`:
+
+   ```sh
+   tar -xzf ironflockos-jetson-flash-kit-<version>.tar.gz
+   cd ironflockos-jetson-flash-kit-<version>
+   sudo ./ironflockos-jetson-flash --board jetson-orin-nano-devkit --flock ~/my-device.flock
+   ```
+
+   `--help` lists the options. The kit works in `./ironflockos-jetson`
+   (`--work`), and keeps its downloads in `./ironflockos-jetson/cache`
+   (`--cache`) for the next run.
+3. **NVIDIA's Agreement.** The kit downloads NVIDIA's Driver License
+   Agreement from NVIDIA (`BSP_LICENSE_URL` in `bsp.conf`), checks it against
+   its pinned SHA-256 and NVIDIA's list, shows it, and asks: type `yes` to
+   accept. Anything else ends the kit before anything of NVIDIA's is
+   downloaded, unpacked or run. `--accept-nvidia-license` accepts it without
+   the question, for scripts; the kit still prints it.
+4. **The image.** The kit downloads the release catalog, checks its Ed25519
+   signature with the catalog key it carries (`pki/ironflockos-catalog.pub`),
+   as the device-agent and FlockFlasher do, and downloads the slot image
+   `ironflockos-jetson-orin-base-<version>.rootfs.ext4.zst` it names, checked
+   against the catalog's SHA-256 and size. `--image FILE` takes a file
+   instead, checked against the catalog, or against `--sha256 HEX`.
+5. **The BSP.** The kit downloads `Jetson_Linux_R39.2.1_aarch64.tbz2` from
+   NVIDIA, checks its SHA-256 and SHA-1 against `bsp.conf` and NVIDIA's list
+   (`build/fetch-bsp.sh`), and only then unpacks it. It runs NVIDIA's
+   `tools/l4t_flash_prerequisites.sh` and installs `zstd`, `e2fsprogs`,
+   `mtools` and `usbutils` (`--skip-prerequisites` leaves the host's packages
+   alone).
+6. **The module.** Exactly one Jetson in recovery mode must be on USB, of the
+   board named; else the kit says what it found and how to get into recovery
+   mode.
+7. **The package** (above), with the module's identity read from it.
+8. **The `.flock`.** The kit copies it into the package's ESP image (`esp`,
+   the device's `/boot/efi`, where `ironflockos-enroll` looks at the first
+   boot), reads it back, and gives NVIDIA's flash index the image's new
+   SHA-1 (`build/tegra-flash-flock.sh`). It refuses a file that is not a
+   device's `.flock` before anything is downloaded. Without `--flock` the
+   device boots and waits for one, as an image from FlockFlasher without one
+   does.
+9. **The flash:** `l4t_initrd_flash.sh --showlogs --network usb0 --flash-only
+   --erase-all` from the BSP, with NVIDIA's own output, about 15 minutes:
+   the QSPI firmware, then the NVMe.
+10. **The end.** The kit takes the `.flock` off the package again, whether
+    the flash worked or not, so no copy of it stays on the PC. It says
+    `flashed: the module restarts into IronFlockOS <version>, slot A`. On the
+    Orin Nano Developer Kit carrier, unplug the power, remove the jumper and
+    plug the power in. The module boots slot A, enrolls with the `.flock` and
+    comes online in IronFlock; the device-agent marks the slot good.
+
+### When it fails
+
+| What the kit says | What to do |
+|-------------------|------------|
+| `unknown board` | Take a name from the list it prints |
+| `has to be accepted before anything of NVIDIA's is unpacked or run` | Run it in a terminal and type `yes`, or read the Agreement and add `--accept-nvidia-license` |
+| `does not match the pinned SHA-256 and SHA-1`, `republished` | The download is not the file the kit was made for, and nothing was unpacked. Try again; if it stays, NVIDIA changed the file and the kit needs a new release |
+| `signature does not verify`, `has no IronFlockOS <version>` | The catalog is not IronFlock's, or the release has no Jetson image; check `--catalog` and `--version` |
+| `does not have the SHA-256` | The slot image is damaged or not the release's; the kit deletes a download and fetches it again on the next run |
+| `no Jetson in recovery mode` | Put the module into recovery mode (step 1); check the cable and that no hub is between |
+| `is no module of <board>` | The module on USB belongs to another board: name that one |
+| an error inside NVIDIA's tools | Their output is above it; NVIDIA's logs are in `ironflockos-jetson/Linux_for_Tegra/initrdlog`. Put the module into recovery mode again and run the kit again |
+
+### Flashing again
+
+Put the module into recovery mode and run the same command. The kit unpacks
+the BSP afresh each time (from its cache) and makes the package again, so a
+run that failed halfway leaves nothing behind that the next run uses. The
+flash erases the NVMe: `/data` and the enrollment are gone, and the device
+enrolls again with the `.flock` given.
+
+### Proven, and still to prove
+
+CI (`jetson-flash`) runs the packed kit from its archive with `--no-flash`
+on every pull request: the Agreement from NVIDIA with
+`--accept-nvidia-license`, the build's slot image against its SHA-256, the
+BSP from the cache checked before it is unpacked, NVIDIA's prerequisites,
+both package runs offline for an Orin Nano 8GB, a test `.flock` put on the
+ESP and read back, and the package without it at the end. The unit tests
+(`test/unit/jetson-flash-kit.bats`) cover the kit's own decisions with fakes.
+
+Only a module can prove (WP-6.6):
+
+- that the `--no-flash` runs read the module's identity in recovery mode,
+  and `--flash-only --erase-all` then writes it without the module being put
+  into recovery mode again;
+- that the QSPI-only layout `flash_t234_qspi.xml` is the right one for every
+  board above, the AGX Orin's included, and that its UEFI then boots the
+  NVMe (on an AGX Orin with an eMMC that still holds a system, too);
+- that the QSPI images carry rootfs A/B (`RootfsRedundancyLevel` 1);
+- that the ESP's image in the package is a plain FAT image, that the device
+  side of NVIDIA's flash checks it against the index's SHA-1 and nothing
+  else, and that the `.flock` arrives on `/boot/efi`;
+- the recovery-mode steps and USB ids above;
+- a flash from a host with Ubuntu 22.04 and one with 24.04.
 
 ## Tests
 
@@ -331,7 +511,11 @@ without a module: every command of the backend in every state and failure,
 against a fake `nvbootctrl` and fake efivarfs files, and the cases above
 against a model of NVIDIA's firmware that counts boots as
 `L4TRootfsValidation.c` does. `test/unit/jetson.bats` checks the target's
-files.
+files. `test/unit/jetson-flash-kit.bats` tests the flash kit with fakes of
+NVIDIA's BSP and Agreement, a release catalog signed with a throwaway key and
+a fake ESP image: the order of its steps (nothing of NVIDIA's before the
+Agreement is accepted, nothing unpacked before the checksums), the boards,
+the `.flock` and the archive.
 
 `just build jetson-orin base` builds the image and leaves the tree in
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
@@ -342,22 +526,24 @@ agent and the `nvidia` runtime. It also runs the tree's binaries in a chroot:
 dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
 `ironflock`, `nvidia-ctk` and `nvidia-container-cli`. CI runs both on every
 pull request (`jetson-rootfs` in `ci.yml`, with the bundle), and makes the
-flash package from the image (`jetson-flash`, above). Both jobs run when the
+flash package from the image with the flash kit (`jetson-flash`, above). Both jobs run when the
 repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
 
 ## Open points
 
 - `/etc/nv_boot_control.conf`: `flash.sh` writes it for the module into the
-  BSP's `rootfs/`, and with `-r` it does not reach the slot images.
-  `nvbootctrl` reads the chip id from it and falls back to the device tree
-  without it (its strings); NVIDIA's OTA tools and capsule scripts need it.
-  The flash package has to put it into APP and APP_b (WP-6.4), and updates
-  have to keep it.
-- The A/B switch and the forced fallback on a module (WP-6.6, above).
-- The internal storage (QSPI) images: `--external-only` leaves them out. A
-  module needs them once (r39 bootloader; NVIDIA's two-step `--no-flash
-  --reuse ... internal`, then `--external-only --append`) (WP-6.4).
-- The `.flock` on the ESP for enrollment (WP-6.4).
+  BSP's `rootfs/`, and with `-r` it does not reach the slot images (the
+  `jetson-flash` job prints the one it wrote). `nvbootctrl` reads the chip id
+  from it and falls back to the device tree without it (its strings);
+  NVIDIA's OTA tools and capsule scripts need it. The flash package does not
+  put it into APP and APP_b (WP-6.4 decided so): it describes the module, and
+  every update brings a slot without it, so the device has to write it
+  itself at boot, as NVIDIA's masked `nv-l4t-bootloader-config` does. That
+  goes with the capsule lane, which needs it (WP-6.5).
+- The first flash of a module, the A/B switch and the forced fallback
+  (WP-6.6, above).
+- eMMC as the system disk (AGX Orin without NVMe): `build/tegra-layout.py`
+  knows NVIDIA's NVMe layout only.
 - Licences ([jetson-licence-review.md](../jetson-licence-review.md); done
   2026-11-07, legal sign-off in WP-6.8). Jetson Linux is under the NVIDIA
   Driver License Agreement: NVIDIA's binaries may be redistributed only
@@ -367,6 +553,7 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
     (a rootfs check will enforce it);
   - `apt/jetson-ota-public.asc` is replaced with the key as
     `repo.download.nvidia.com` serves it, without NVIDIA's licence header;
-  - the flash package stays a CI test, and users get a flash kit that
-    downloads the BSP from NVIDIA (WP-6.4);
+  - the flash package stays a CI test, and users get the flash kit, which
+    downloads the BSP and the Agreement from NVIDIA and asks for acceptance
+    (WP-6.4, [Flashing a module](#flashing-a-module));
   - the QSPI capsule comes unchanged from `nvidia-l4t-bootloader` (WP-6.5).

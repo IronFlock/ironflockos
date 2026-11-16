@@ -242,11 +242,17 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-  # The flash dry run of jetson-orin (WP-6.2): NVIDIA's
-  # l4t_initrd_flash.sh --no-flash with IronFlockOS's partition layout and the
-  # slot image just built, offline for an Orin Nano 8GB developer kit, on an
-  # x86_64 runner (NVIDIA's flashing host). The BSP tarball is cached by its
-  # pin (targets/jetson-orin/bsp.conf).
+  # The flash kit of jetson-orin (WP-6.4), as far as it goes without a
+  # module, on an x86_64 runner (NVIDIA's flashing host): the kit is packed
+  # (build/jetson-flash-kit.sh, the artifact jetson-flash-kit) and run from
+  # its archive with --no-flash: NVIDIA's Agreement from NVIDIA, accepted with
+  # --accept-nvidia-license; the slot image just built, against its SHA-256;
+  # the BSP from the cache keyed on its pin (targets/jetson-orin/bsp.conf),
+  # checked before it is unpacked; NVIDIA's host prerequisites; the flash
+  # package offline for an Orin Nano 8GB developer kit (QSPI and NVMe, both
+  # with rootfs A/B; build/tegra-flash-package.sh); a test .flock on the
+  # package's ESP, read back, and off again at the end. Only the flash
+  # itself (l4t_initrd_flash.sh --flash-only) needs a module (WP-6.6).
   jetson-flash:
     needs: [jetson-rootfs]
     runs-on: ubuntu-24.04
@@ -261,33 +267,57 @@ jobs:
         with:
           path: ~/ironflockos-bsp-cache
           key: l4t-bsp-${{ hashFiles('targets/jetson-orin/bsp.conf') }}
-      - name: fetch and unpack the BSP
+      - name: pack the flash kit
         run: |
-          sudo mkdir -p /mnt/l4t
-          sudo build/fetch-bsp.sh "$HOME/ironflockos-bsp-cache" /mnt/l4t
-          sudo chown -R "$(id -u):$(id -g)" "$HOME/ironflockos-bsp-cache"
-          df -h / /mnt
-      - name: NVIDIA's flashing prerequisites
-        run: sudo /mnt/l4t/Linux_for_Tegra/tools/l4t_flash_prerequisites.sh
+          build/jetson-flash-kit.sh out/kit
+          mkdir -p "$RUNNER_TEMP/kit"
+          tar -xzf out/kit/ironflockos-jetson-flash-kit-*.tar.gz -C "$RUNNER_TEMP/kit"
+          tar -tvzf out/kit/ironflockos-jetson-flash-kit-*.tar.gz
+      - name: upload the flash kit
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jetson-flash-kit
+          path: out/kit/
+          if-no-files-found: error
+          retention-days: 3
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-jetson-orin-base
           path: image
       # NVIDIA's l4t_initrd_flash.sh looks for Jetsons on the USB buses even
       # with --no-flash and fails where there is no bus at all, as on the
-      # runner: in a mount namespace of its own it sees one empty bus.
-      - name: tegra-flash-package (offline, Orin Nano 8GB developer kit)
+      # runner: in a mount namespace of its own it sees one empty bus. The
+      # test .flock is not a device's: it only has the fields the kit checks.
+      - name: the flash kit, --no-flash (offline, Orin Nano 8GB developer kit)
         run: |
+          slot=$(ls image/ironflockos-jetson-orin-base-*.rootfs.ext4.zst)
+          sha=$(awk -v f="${slot##*/}" '$2 == f { print $1 }' image/SHA256SUMS)
+          printf '{"name":"ci-test","serial_number":"ci-test","secret":"ci","device_key":"ci"}\n' >"$RUNNER_TEMP/ci-test.flock"
+          sudo mkdir -p /mnt/kit-work
           # shellcheck disable=SC2016 # "$@" belongs to the inner bash
           sudo unshare -m bash -c 'mount -t tmpfs ironflockos-no-usb /sys/bus/usb/devices && mkdir /sys/bus/usb/devices/usb1 && exec "$@"' bash \
-            build/tegra-flash-package.sh /mnt/l4t/Linux_for_Tegra image/ironflockos-jetson-orin-base-*.rootfs.ext4.zst \
-            jetson-orin-nano-devkit 3767 0003
+            "$RUNNER_TEMP"/kit/ironflockos-jetson-flash-kit-*/ironflockos-jetson-flash \
+            --board jetson-orin-nano-devkit --no-flash --board-id 3767 --board-sku 0003 --chip-sku 00:00:00:D5 \
+            --accept-nvidia-license --image "$slot" --sha256 "$sha" --flock "$RUNNER_TEMP/ci-test.flock" \
+            --work /mnt/kit-work --cache "$HOME/ironflockos-bsp-cache"
+      - name: the package keeps no .flock
+        run: |
+          k=/mnt/kit-work/Linux_for_Tegra/tools/kernel_flash
+          read -r esp sha1 < <(sudo awk -F', ' '$2 ~ /:esp$/ { print $5, $8 }' "$k/images/external/flash.idx")
+          [ "$(sudo sha1sum "$k/images/external/$esp" | cut -d' ' -f1)" = "$sha1" ]
+          sudo mdir -i "$k/images/external/$esp" ::/ | tee "$RUNNER_TEMP/esp.txt"
+          if grep -qi 'flock' "$RUNNER_TEMP/esp.txt"; then echo "a .flock stayed on the package's ESP"; exit 1; fi
+          sudo test ! -e "$k/images.ironflockos-orig"
       - name: what the package holds
         if: ${{ always() }}
         run: |
-          sudo find /mnt/l4t/Linux_for_Tegra/tools/kernel_flash/images -maxdepth 2 -printf '%M %10s %p\n' | sort -k3 | head -80 || true
-          sudo cat /mnt/l4t/Linux_for_Tegra/tools/kernel_flash/images/external/flash.cfg 2>/dev/null || true
-          sudo cat /mnt/l4t/Linux_for_Tegra/tools/kernel_flash/images/external/flash.idx 2>/dev/null || true
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/ironflockos-bsp-cache" || true
+          k=/mnt/kit-work/Linux_for_Tegra/tools/kernel_flash
+          sudo find "$k/images" -maxdepth 2 -printf '%M %10s %p\n' | sort -k3 | head -120 || true
+          sudo cat "$k/images/external/flash.cfg" 2>/dev/null || true
+          sudo cat "$k/images/external/flash.idx" 2>/dev/null || true
+          sudo cat /mnt/kit-work/Linux_for_Tegra/rootfs/etc/nv_boot_control.conf 2>/dev/null || true
+          df -h / /mnt
 
   workflows:
     uses: IronFlock/workflows/.github/workflows/workflows-lint.yml@v1

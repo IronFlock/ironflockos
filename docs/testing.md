@@ -501,10 +501,34 @@ the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 `nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
 agent and Docker's `nvidia` runtime. It also runs the tree's binaries in a
 chroot, the backend among them (`docs/targets/jetson-orin.md`). It needs root
-and an arm64 host. The `jetson-flash` job then makes the flash package from
-the image with NVIDIA's tools on an x86_64 runner
-(`build/tegra-flash-package.sh`): the dry run that the layout and the slot
-images pass the BSP's checks.
+and an arm64 host. The `jetson-flash` job then packs the flash kit
+(`build/jetson-flash-kit.sh`, the artifact `jetson-flash-kit`) and runs it
+from its archive on an x86_64 runner, with `--no-flash`, as far as it goes
+without a module: NVIDIA's Agreement downloaded from NVIDIA and checked
+against its pin, accepted with `--accept-nvidia-license`; the slot image just
+built, against its SHA-256; the BSP from the cache, checked before it is
+unpacked; NVIDIA's host prerequisites; the flash package made with NVIDIA's
+tools offline for an Orin Nano 8GB (`build/tegra-flash-package.sh`: the QSPI
+images and the NVMe's, both with rootfs A/B, the layout and the slot images
+through the BSP's checks); a test `.flock` put on the package's ESP and read
+back; and, in a step of its own, the package without the `.flock` at the end.
+Only `l4t_initrd_flash.sh --flash-only`, the flash itself, is left for a
+module ("Flashing a module" in `docs/targets/jetson-orin.md` lists what only
+a module proves).
+
+The kit's own logic is covered by `test/unit/jetson-flash-kit.bats`, with
+NVIDIA's BSP and Agreement as fakes served from `file://` URLs: an unknown
+board is refused with the list of the known ones; without acceptance nothing
+of NVIDIA's is downloaded or unpacked; an Agreement, a BSP or a slot image
+that is not the pinned one stops it before anything is unpacked; the release
+catalog's signature is checked with a throwaway Ed25519 key, and another
+signature or a missing release is refused; a file that is not a device's
+`.flock` is refused before anything is fetched; the `.flock` goes onto a fake
+ESP image with the flash index's SHA-1 updated, comes off again byte for
+byte, and an ESP the script does not know is left alone (with the real
+mtools, where installed, on a FAT image too); and the archive holds exactly
+IronFlockOS's files, the same bytes each time, and runs unpacked.
+`fetch-bsp.bats` covers the Agreement's download on its own pins.
 
 The backend's logic is covered by `test/unit/tegra-rootfs-ab.bats`: every
 command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
