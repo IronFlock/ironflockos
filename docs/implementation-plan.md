@@ -731,7 +731,7 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   needed and cannot be staged (window closed, no capsule for the board, no room on
   the ESP), an update within one L4T generation (39.2.x) switches slots all the same
   and runs on the older firmware until an OS update inside a window brings it (Marko,
-  2026-11-17; WP-6.3's fallback covers a slot that does not boot on it), and the
+  2026-11-16; WP-6.3's fallback covers a slot that does not boot on it), and the
   report says `firmware-behind`; across generations, or with the chain's firmware
   unknown, the update does not switch slots (NVIDIA states no compatibility of a root
   file system with other firmware, and the kernel runs on the firmware's device tree). `tegra-capsule` writes `TegraPlatformSpec` and

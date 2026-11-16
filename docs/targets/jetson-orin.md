@@ -461,7 +461,7 @@ upgrades stage the capsule before the reboot, and its developer kit's SD
 image updates the QSPI firmware on its first boot when it is older (which
 shows that a newer minor release does start on older firmware, at least that
 far). Within one generation IronFlockOS relies on that (decided by Marko
-on 2026-11-17): without a window, a slot of 39.2.1 is switched to on a
+on 2026-11-16): without a window, a slot of 39.2.1 is switched to on a
 chain of 39.2.0. If it does not boot there, NVIDIA's firmware counts three
 tries and falls back to the old slot ("The health gate"); if it boots and
 the agent never marks it good, the health gate takes the device back. Across

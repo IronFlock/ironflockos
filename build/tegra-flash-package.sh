@@ -139,7 +139,14 @@ rm -f "$tree/etc/resolv.conf"
 cp -L /etc/resolv.conf "$tree/etc/resolv.conf"
 mkdir -p "$tree/opt/nvidia/l4t-packages"
 touch "$tree/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall"
-chroot "$tree" apt-get -qq update
+# An archive mirror in the middle of a sync serves an index that does not
+# match its Release file for some minutes: try again before giving up.
+for try in 1 2 3 4 5; do
+  if chroot "$tree" apt-get -qq update; then break; fi
+  [ "$try" -lt 5 ] || die "apt-get update failed in the tree five times (an archive mirror out of sync?)"
+  log "apt-get update failed in the tree (try $try of 5); again in 60 s"
+  sleep 60
+done
 chroot "$tree" env DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends \
   mtd-utils file parted "nvidia-l4t-optee=$L4T_PACKAGE_VERSION" \
   busybox fdisk gdisk libnsl2 libpcre3 isc-dhcp-client >/dev/null
