@@ -1891,9 +1891,13 @@ class Runner:
         (ironflockos-ca.path), and curl refuses the test chain's server again."""
         d = TEST_CA_DIR
         self.vm.run("rm /data/ironflockos/ca.crt")
+        # The reload rebuilds the store and restarts containerd, Docker and
+        # the agent. Without KVM that took 150 s on arm64's real-time image
+        # (Docker began its restart 130 s after the file went), so the limit
+        # grows as the boot's does.
         self.wait_for(f"! grep -qxF \"$(sed -n 2p {d}/root.pem)\" {CA_BUNDLE}"
-                      " && [ \"$(systemctl is-active ironflockos-ca-reload.service)\" = inactive ]", 120,
-                      "the trust store to drop the test's CAs")
+                      " && [ \"$(systemctl is-active ironflockos-ca-reload.service)\" = inactive ]",
+                      120 if self.vm.accel != "tcg" else 600, "the trust store to drop the test's CAs")
         self.vm.run("test ! -e /usr/local/share/ca-certificates/ironflockos")
         rc, out = self.tls_rc()
         if rc != 60:
