@@ -1,9 +1,10 @@
 # ADR-0020: A machine's panel PC runs the stock image, and its functions move into apps
 
-Status: proposed, 2026-11-12. The first machine was surveyed on 2026-11-12 (section 8).
-Built with this record: the repair at boot (section 7) and AppArmor (section 5). The
-screen has its own plan ([kiosk-plan.md](../kiosk-plan.md)), and the firewall waits for
-the device-agent's feature (section 6).
+Status: accepted, 2026-11-12. First in IronFlockOS 0.17.0: the repair at boot
+(section 7), AppArmor (section 5) and the image's side of the screen (section 3, with its
+own plan, [kiosk-plan.md](../kiosk-plan.md)). The first machine was surveyed on
+2026-11-12 (section 8). Open: the firewall, which waits for the device-agent's feature
+(section 6), the kiosk app, and the acceptance on the machine.
 
 ## Context
 
@@ -193,8 +194,8 @@ This machine's functions do not need AppArmor. It is for every device.
 
 ## Consequences
 
-- Work for IronFlockOS that is left: the splash and the keys of
-  [kiosk-plan.md](../kiosk-plan.md); loading the agent's firewall rules at boot, if
+- Work for IronFlockOS that is left after 0.17.0, which has the splash and the keys of
+  [kiosk-plan.md](../kiosk-plan.md): loading the agent's firewall rules at boot, if
   section 6 is decided that way; the hardware acceptance with its latency figure;
   AppArmor on Jetson.
 - Work for the device-agent: the firewall setting (section 6).
@@ -220,9 +221,10 @@ This machine's functions do not need AppArmor. It is for every device.
   `ironflock appliance` prepares its host outside its install directory, in the root
   slot, which the next OS update replaces. The machine has the memory and the disk for
   the appliance.
-- IronFlockOS has no account with a password today, on the screen or over SSH. What a
-  person logs in with at the machine's console is open in
-  [kiosk-plan.md](../kiosk-plan.md) (O1); the machine's own UI keeps its own users.
+- IronFlockOS has no account with a password unless one is set, on the screen or over
+  SSH. At the machine's console a person logs in with the device's console password
+  ([kiosk-plan.md](../kiosk-plan.md), D8), which is off until it is set; SSH takes keys
+  only. The machine's own UI keeps its own users.
 
 ## Alternatives considered
 
