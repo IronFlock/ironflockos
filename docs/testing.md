@@ -548,14 +548,17 @@ update cases (marked good, never marked good and restarted, a cold restart
 during the trial, does not boot, no slot known good, no `/data`) against a
 model of NVIDIA's firmware that counts boots as its source does.
 `test/unit/tegra-capsule.bats` covers the boot firmware lane: `tegra-capsule
-stage` in every case (the chain already right, each reason it refuses, the
+stage` in every case (the chain already right, an older chain of the same
+generation without a window or without a capsule to stage, which switches
+without it, each reason it refuses, the
 window file's parsing, the bytes of `OsIndications` and the platform spec
 variables, the capsule's name and place on a fake ESP, the board's capsule by
 the firmware's spec rule), `withdraw` and `pending`, the backend with a
 staged capsule, an update through a model of the firmware that applies the
 capsule (and switches chain and slot) or rejects it, `report`, and
 `build/tegra-capsules.sh` against trees with fake FMP capsules (lock-step,
-missing capsules, a file that is no capsule, the package's version), and
+missing capsules, a file that is no capsule, the package's version), the
+report's `firmware-behind`, and
 `tegra-board-conf`, which copies the module's `nv_boot_control.conf` from a
 fake ESP to `/etc` (none there, another one, one that is not NVIDIA's, none
 on the ESP, `/etc` not writable: never a failure). The fake

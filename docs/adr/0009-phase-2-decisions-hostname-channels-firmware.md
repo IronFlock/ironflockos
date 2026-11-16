@@ -40,11 +40,12 @@ read-only: the device-agent reports fwupd's devices and their firmware versions,
 platform shows them (WP-2.5, WP-2.9). Updates through fwupd and LVFS follow once the
 inventory has shown what the fleet carries.
 
-*Note 2026-11-16 (WP-6.5):* on Jetson, an OS release whose L4T release differs
-from the boot firmware of the slot it goes to does need a platform action: the
-capsule is staged only inside the device's maintenance window
-(`/data/ironflockos/maintenance.conf`, master plan 3.10), and without it the update
-does not switch slots. Releases on the same L4T release need nothing.
+*Note 2026-11-16 (WP-6.5), changed 2026-11-17:* on Jetson the boot firmware
+is updated only inside the device's maintenance window
+(`/data/ironflockos/maintenance.conf`, master plan 3.10), a platform action. Without
+it, an OS release of the same L4T generation (39.2.x) still installs and runs on the
+older firmware until an update inside a window; one that needs another generation's
+firmware does not switch slots. Releases on the same L4T release need nothing.
 
 *Amended 2026-11-08:* the updates were brought forward, per device and on an operator's
 request. The agent reports what fwupd offers and its history with the inventory, fetches

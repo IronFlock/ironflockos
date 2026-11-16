@@ -389,8 +389,13 @@ has written the other slot, `rauc-post-install` carries
 | The chain of the new slot | Window | What happens |
 |---------------------------|--------|--------------|
 | has the slot's L4T release (`/etc/nv_tegra_release` of the slot) and is not marked failed | any | no capsule; RAUC switches the slot through `nvbootctrl`, as before |
-| another release, unknown, or failed | open | NVIDIA's capsule for this board, from the new slot's `/opt/ota_package/t23x`, is staged (below); the capsule switches the slot |
-| another release, unknown, or failed | closed | the install fails with the reason: the slot is not switched to, the device stays on the slot it runs |
+| another release, unknown, or failed | open, and a capsule can be staged | NVIDIA's capsule for this board, from the new slot's `/opt/ota_package/t23x`, is staged (below); the capsule switches the slot |
+| an older release of the same generation (39.2.0 for a 39.2.1 slot) | closed, or no capsule can be staged | no capsule; RAUC switches the slot through `nvbootctrl`, and the slot runs on the older firmware until an OS update inside a window brings the firmware up; the journal says so |
+| another generation (39.1 for 39.2), unknown, or failed | closed, or no capsule can be staged | the install fails with the reason: the slot is not switched to, the device stays on the slot it runs |
+| newer than the slot, a lowest supported version (ESRT) above the slot's release, another L4T release (R36 for R39), or the slot names no release | any | the install fails: no capsule goes back, and across releases a module is flashed |
+
+A **generation** is an L4T release and major number: 39.2.x is one, 39.3.x the
+next (NVIDIA's `0xRRRRMMmm` without the minor byte).
 
 Staging, as NVIDIA's `nv_bootloader_capsule_updater.sh` and the package's
 post-install script do it:
@@ -417,24 +422,35 @@ The capsule is chosen by the firmware's own rule: of the new slot's
 `TEGRA_BL_<board id>*.Cap`, the one whose board specs match `COMPATIBLE_SPEC`
 field by field. None or more than one: no capsule for this board.
 
-Cases in which the capsule is needed but not staged, so the update does not
-switch slots (the journal and RAUC's error say which):
+Reasons a needed capsule is not staged (the journal, and RAUC's error when
+the install fails, name it):
 
-- no maintenance window open (below);
+- no maintenance window open, or a window file it does not understand
+  (below);
 - no `COMPATIBLE_SPEC` in `/etc/nv_boot_control.conf`, or no capsule for this
-  board in the new slot;
+  board in the new slot (every carrier board but NVIDIA's developer kits);
 - the ESP is not mounted at `/boot/efi`, or has less room than the capsule,
   L4TLauncher and 1 MiB (NVIDIA's capsules of 39.2.1 are 12 to 52 MB);
-- no efivarfs, or `OsIndicationsSupported` without bit 2;
-- the chain has another L4T generation (a flash), or a newer release, or the
-  ESRT's lowest supported version is above the slot's release (a capsule
-  cannot go back);
-- the new slot names no L4T release.
+- `OsIndicationsSupported` without bit 2;
+- writing the platform spec variables, the capsule, L4TLauncher or
+  `OsIndications` failed (what was written of the capsule is taken off the
+  ESP again; if that fails too, the install fails).
+
+Within one generation, on older firmware, each of them leads to the switch
+without the capsule; otherwise to a failed install. Without efivarfs the
+chains' firmware cannot be read, so the version is unknown and the install
+fails.
 
 Because a capsule writes only the chain it switches to, the chain of the slot
 an update leaves keeps its old firmware: that is the rollback. After a new
 L4T release, the next update into the other slot needs the window again, to
 bring that chain up too.
+
+The firmware follows only with an OS update: a capsule is staged by an
+update's hook, never on its own. A slot that took a minor update without the
+window runs on the older firmware (`report`: `firmware-behind=yes`) until the
+next OS update inside a window, and that update brings up only the chain of
+the slot it goes to; the other chain follows with the update after it.
 
 **A new slot on old firmware.** NVIDIA makes no compatibility statement for
 an L4T root filesystem on the boot firmware of another minor release. The
@@ -444,8 +460,13 @@ releases there. NVIDIA's own flows never run that way for long: apt
 upgrades stage the capsule before the reboot, and its developer kit's SD
 image updates the QSPI firmware on its first boot when it is older (which
 shows that a newer minor release does start on older firmware, at least that
-far). Not sure enough to run a fleet on it, IronFlockOS does not switch to a
-slot whose chain has another release: the update waits for a window.
+far). Within one generation IronFlockOS relies on that (decided by Marko
+on 2026-11-17): without a window, a slot of 39.2.1 is switched to on a
+chain of 39.2.0. If it does not boot there, NVIDIA's firmware counts three
+tries and falls back to the old slot ("The health gate"); if it boots and
+the agent never marks it good, the health gate takes the device back. Across
+generations IronFlockOS does not switch without the capsule: the update
+waits for a window.
 
 ### The maintenance window
 
@@ -468,7 +489,12 @@ until=1763625600     # optional: the window ends then, in seconds since 1970 (UT
   its restart, and closes the window by removing the file. A staged capsule
   that the firmware has not taken by the next restart is removed then.
 - A factory reset removes it with the rest of `/data/ironflockos`.
-- Updates that need no firmware do not read it.
+- Updates that need no firmware do not read it. Without the window, an
+  update to a newer release of the same generation goes ahead without the
+  firmware (the slot runs on the older firmware, `firmware-behind=yes`); one
+  that needs another generation's firmware fails. So the platform opens a
+  window when `firmware-behind=yes`, or before an update to another
+  generation, and the next OS update brings the firmware.
 
 ### After the restart
 
@@ -490,6 +516,8 @@ journal and in `/run/ironflockos/boot-firmware`, rewritten at every boot,
 which the device-agent can read:
 
 ```ini
+slot-release=39.2.1           # the running slot's L4T release (/etc/nv_tegra_release)
+firmware-behind=no            # yes: its chain's firmware is older; unknown
 slot-a-firmware=39.2.1        # SystemFwVersions, or unknown
 slot-b-firmware=39.2.1
 running-firmware=39.2.1       # the ESRT
@@ -512,6 +540,8 @@ capsule-version=39.2.1
 | The new chain does not start (MB1, MB2 or UEFI fails) | NVIDIA's boot ROM and MB1 are to fall back to the other chain after failed starts (bootloader redundancy as NVIDIA's developer guide describes it; the code is closed and was not checked); that chain boots the old slot. `report`: `failed`. UEFI marks a chain good as soon as it reaches its boot manager, so this covers only firmware that fails before that |
 | The new chain starts, the new slot does not boot | L4TLauncher counts three warm boots, marks the slot unbootable and switches through `BootChainFwNext` to the old chain, with the old firmware and the old slot. `report`: `applied`, fell back |
 | The new slot boots, the agent never marks it good | the health gate as above ("The health gate"): the old slot, through `BootChainFwNext`, on its old chain |
+| A minor update without the window: the new slot does not boot on the older firmware of its chain | as an update that does not boot: L4TLauncher counts three warm boots and falls back to the old slot, with its chain; the health gate marks the trial bad. No firmware was written |
+| A minor update without the window: the new slot boots on the older firmware | it runs; `report` says `firmware-behind=yes` at every boot until an OS update inside a window brings the firmware |
 | Power lost after staging, before RAUC's switch | the capsule applies and switches to the new slot, which RAUC marked unbootable before writing it: L4TLauncher switches back to the old chain and slot at once |
 
 No case loops: the firmware's own fallbacks are bounded, `report` restarts
@@ -692,7 +722,10 @@ board, the configuration its maker names):
 
 IronFlockOS goes onto the NVMe on every board. eMMC, USB drives and SD cards
 are not supported: `build/tegra-layout.py` knows NVIDIA's NVMe layout only.
-On an AGX Orin the eMMC keeps what it holds.
+On an AGX Orin the eMMC keeps what it holds, an older system included.
+**Not yet proven on the AGX Orin:** that its firmware then starts IronFlockOS
+from the NVMe and not the system on the eMMC; nobody has flashed one yet
+(WP-6.6). Flash an AGX Orin only to try this out until then.
 
 ### Step by step
 

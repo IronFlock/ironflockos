@@ -206,9 +206,11 @@ written has another release, and the capsule's reboot switches the slot. It
 does so only inside the platform's maintenance window, a device setting:
 `/etc/ironflockos/maintenance.conf`, which links to
 `/data/ironflockos/maintenance.conf` (`boot-firmware=yes`, optionally
-`until=<seconds since 1970>`; no file: closed). Without the window such an
-update fails and the device stays on its slot; an update that needs no new
-firmware does not look at it
+`until=<seconds since 1970>`; no file: closed). Without the window an update
+to a newer release of the same L4T generation (39.2.x) goes ahead and runs on
+the older firmware until an OS update inside a window brings it; one that
+needs another generation's firmware fails and the device stays on its slot;
+an update that needs no new firmware does not look at it
 ([jetson-orin.md](targets/jetson-orin.md#boot-firmware-updates)). The Pi's
 EEPROM lane is WP-5.3; PCs have none.
 
