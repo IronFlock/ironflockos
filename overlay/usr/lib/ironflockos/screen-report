@@ -1,0 +1,368 @@
+#!/bin/bash
+# What this boot showed on the screen, as plain text for a person to paste
+# back (docs/build.md, "The screen"; docs/testing.md, "Hardware checklist";
+# WP-8.6 of docs/kiosk-plan.md). Run by hand as root on a booted device; no
+# unit runs it. It changes nothing: it reads files, the journal, systemd's and
+# Docker's state and the framebuffer device. Only --screenshot writes.
+#
+#   screen-report [--app NAME] [--screenshot FILE]
+#     --app NAME         also the start of the running container whose name
+#                        contains NAME (the kiosk app)
+#     --screenshot FILE  the framebuffer device's picture into FILE, as a PPM
+#
+# Times are seconds after the kernel started (CLOCK_MONOTONIC, as systemd and
+# the journal keep them), and after the reset where the firmware reports its
+# own times (ACPI's FPDT). What the device cannot say is "not available", with
+# why. Exit 0 once the report is written; 2 for wrong usage, 1 when not root.
+# No set -e: a probe that fails is an item not available, not the report's end.
+set -uo pipefail
+export LC_ALL=C
+
+# IRONFLOCKOS_ROOT: for the unit tests only (a tree that stands for /).
+root=${IRONFLOCKOS_ROOT:-}
+esp=$root/boot/efi/EFI/BOOT
+theme=$root/usr/share/plymouth/themes/ironflockos
+here=$(dirname "$0")
+
+bad() {
+  echo "usage: screen-report [--app NAME] [--screenshot FILE]" >&2
+  exit 2
+}
+app="" shot=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --app | --screenshot) [ -n "${2:-}" ] || bad ;;&
+    --app) app=$2 && shift ;;
+    --screenshot) shot=$2 && shift ;;
+    -h | --help) sed -n '8,11s/^# //p' "$0" && exit 0 ;;
+    *) bad ;;
+  esac
+  shift
+done
+if [ "$(id -u)" != 0 ]; then
+  echo "screen-report: run as root" >&2
+  exit 1
+fi
+
+rd() { cat "$1" 2>/dev/null; }
+# prop UNIT PROPERTY: one property of a unit; UNIT "" for systemd itself.
+prop() { systemctl show -p "$2" --value ${1:+"$1"} 2>/dev/null; }
+journal() { journalctl --no-pager -o cat "$@" 2>/dev/null; }
+secs() { awk -v v="$1" -v d="$2" 'BEGIN { printf "%.2f", v / d }'; }
+section() { printf '\n== %s ==\n' "$1"; }
+
+events="" missing=""
+at() { events+="$1"$'\t'"$2"$'\n'; }
+miss() { missing+="  $1: not available: $2"$'\n'; }
+# mono UNIT PROPERTY EVENT WHY: an event at a unit's monotonic timestamp.
+mono() {
+  local us
+  us=$(prop "$1" "$2")
+  if [[ "$us" =~ ^[1-9][0-9]*$ ]]; then at "$(secs "$us" 1000000)" "$3"; else miss "$3" "$4"; fi
+}
+# pstart PID: when a process started, in seconds after the kernel started
+# (/proc/PID/stat, as keep-splash reads Plymouth's).
+pstart() {
+  local s
+  s=$(rd "$root/proc/$1/stat") && [ -n "$s" ] || return 1
+  awk -v hz="$(getconf CLK_TCK)" '{ printf "%.2f", $20 / hz }' <<<"${s##*) }"
+}
+
+cmdline=$(rd "$root/proc/cmdline")
+kver=$(uname -v 2>/dev/null)
+noruntime=""
+[[ "$kver" != *PREEMPT_RT* ]] || noruntime=" (the -rt kernel turns the EFI runtime services off)"
+
+section "The device"
+# shellcheck disable=SC1091 # the device's own os-release
+osr=$(. "$root/etc/os-release" 2>/dev/null && echo "IronFlockOS ${IMAGE_VERSION:-?}, image ${IMAGE_ID:-?}, build ${BUILD_ID:-?}")
+echo "system: ${osr:-not available: no /etc/os-release}"
+slot=$(grep -o 'rauc\.slot=[A-Za-z0-9]*' <<<"$cmdline" | cut -d= -f2)
+echo "slot: ${slot:-not available: no rauc.slot= on the kernel command line}"
+echo "kernel: $(uname -r 2>/dev/null) $kver"
+dmi=$root/sys/class/dmi/id
+if [ -d "$dmi" ]; then
+  echo "board: $(rd "$dmi/sys_vendor") $(rd "$dmi/product_name") (board $(rd "$dmi/board_vendor") $(rd "$dmi/board_name")) (DMI)"
+  echo "firmware: $(rd "$dmi/bios_vendor") $(rd "$dmi/bios_version"), $(rd "$dmi/bios_date") (DMI)"
+else
+  echo "board, firmware: not available: no DMI table"
+fi
+sb=$(journal -k -b | grep -m 1 -o 'secureboot: Secure boot [a-z]*')
+echo "Secure Boot: ${sb:-not in the kernel log}; lockdown $(rd "$root/sys/kernel/security/lockdown")"
+echo "kernel command line: $cmdline"
+
+# --- the boot's timeline ------------------------------------------------------
+fpdt=$root/sys/firmware/acpi/fpdt/boot
+ebs=$(rd "$fpdt/exitbootservice_end_ns")
+poweron=""
+if [[ "$ebs" =~ ^[1-9][0-9]*$ ]]; then
+  poweron=$(secs "$ebs" 1e9)
+  for f in "firmware_start:the firmware runs (FPDT)" \
+    "bootloader_launch:the boot loader starts: shim, GRUB, its 2 s (FPDT)" \
+    "exitbootservice_end:the kernel takes over from the firmware (FPDT: ExitBootServices)"; do
+    v=$(rd "$fpdt/${f%%:*}_ns")
+    [[ ! "$v" =~ ^[0-9]+$ ]] || at "$(secs $((v - ebs)) 1e9)" "${f#*:}"
+  done
+else
+  at 0.00 "the kernel starts"
+  miss "power-on" "the firmware reports no times in ACPI's FPDT (${fpdt#"$root"})"
+fi
+fw=$(prop "" FirmwareTimestampMonotonic) ld=$(prop "" LoaderTimestampMonotonic)
+if [[ "$fw" =~ ^[0-9]+$ ]] && [[ "$ld" =~ ^[1-9][0-9]*$ ]]; then
+  [ "$fw" -eq 0 ] || at "-$(secs "$fw" 1000000)" "the firmware starts (systemd)"
+  at "-$(secs "$ld" 1000000)" "the boot loader starts (systemd)"
+else
+  miss "the firmware's and the boot loader's times by systemd" "GRUB hands systemd none (LoaderTimeExecUSec)$noruntime"
+fi
+mono "" UserspaceTimestampMonotonic "the initramfs ends: systemd starts in the root filesystem" "systemd has no time"
+ply=$(journal -b -u plymouth-quit.service | grep -m 1 '^keep-splash: Plymouth (pid' | grep -o 'started [0-9.]* s' | tr -dc '0-9.')
+if [ -n "$ply" ]; then
+  at "$ply" "Plymouth starts (keep-splash's record in the journal)"
+else
+  miss "Plymouth's start" "keep-splash recorded none this boot (no Plymouth at the end of the boot: boot=text, or it ended early)"
+fi
+mono plymouth-quit.service ExecMainStartTimestampMonotonic "keep-splash takes the screen over from Plymouth" "plymouth-quit.service did not run"
+mono plymouth-quit.service ExecMainExitTimestampMonotonic "Plymouth has quit, the splash kept" "plymouth-quit.service did not end"
+if [ "$(prop ironflockos-enroll.service ConditionResult)" = no ]; then
+  miss "ironflockos-enroll's end" "it did not run: the slot was enrolled and no .flock waited"
+else
+  mono ironflockos-enroll.service ExecMainExitTimestampMonotonic "ironflockos-enroll ends" "it has not ended"
+fi
+mono docker.service ActiveEnterTimestampMonotonic "Docker is active" "docker.service is $(prop docker.service ActiveState)"
+mono ironflock-device-agent.service ActiveEnterTimestampMonotonic "the device-agent is active (its last start)" \
+  "ironflock-device-agent.service is $(prop ironflock-device-agent.service ActiveState) (not enrolled?)"
+mono multi-user.target ActiveEnterTimestampMonotonic "multi-user.target: the boot's end" "not reached"
+containers=""
+if [ "$(prop docker.service ActiveState)" = active ]; then
+  ids=$(timeout 30 docker ps -q 2>/dev/null | tr '\n' ' ')
+  # shellcheck disable=SC2086 # the ids, one word each
+  [ -z "$ids" ] || containers=$(timeout 30 docker inspect -f '{{.Name}} {{.State.Pid}} {{.RestartCount}}' $ids 2>/dev/null | sed 's|^/||')
+fi
+first="" found=""
+while read -r name pid restarts; do
+  if [ -z "$name" ] || ! t=$(pstart "$pid"); then continue; fi
+  if [ -z "$first" ] || awk -v a="$t" -v b="${first%% *}" 'BEGIN { exit !(a < b) }'; then first="$t $name"; fi
+  if [ -n "$app" ] && [[ "$name" == *"$app"* ]]; then
+    at "$t" "the container $name starts (--app; its first process, /proc; restarted $restarts times)"
+    found=yes
+  fi
+done <<<"$containers"
+if [ -n "$first" ]; then
+  at "${first%% *}" "the first container now running starts: ${first#* } (its first process, /proc)"
+else
+  miss "the first container's start" "no container runs (docker.service is $(prop docker.service ActiveState))"
+fi
+if [ -n "$app" ] && [ -z "$found" ]; then
+  miss "the container of --app $app" "no running container's name contains it; running: $(awk '{ printf "%s ", $1 }' <<<"$containers")"
+fi
+section "The boot's timeline (seconds after the kernel started, and after the reset by FPDT)"
+printf '%9s  %9s  %s\n' kernel power-on event
+sort -g <<<"${events%$'\n'}" | while IFS=$'\t' read -r t label; do
+  p=-
+  [ -z "$poweron" ] || p=$(awk -v t="$t" -v o="$poweron" 'BEGIN { printf "%.2f", t + o }')
+  printf '%9s  %9s  %s\n' "$t" "$p" "$label"
+done
+printf '%s' "$missing"
+echo "systemd-analyze: $(systemd-analyze time 2>&1 | head -n 1)"
+
+# --- graphics -----------------------------------------------------------------
+section "Graphics"
+for c in "$root"/sys/class/drm/card[0-9]*; do
+  if [ -e "$c/status" ]; then
+    echo "  ${c##*/}: $(rd "$c/status"), $(rd "$c/enabled"), dpms $(rd "$c/dpms"), preferred mode $(head -n 1 "$c/modes" 2>/dev/null)"
+  elif [ -e "$c/device" ]; then
+    echo "${c##*/}: driver $(basename "$(readlink -f "$c/device/driver")"), device $(basename "$(readlink -f "$c/device")") ($(rd "$c/device/vendor"):$(rd "$c/device/device"))"
+  fi
+done
+# debugfs's atomic state: each CRTC's mode, each connector's CRTC, and whose
+# framebuffer each plane shows ("[fbcon]": the framebuffer device's).
+planes="" seen=" "
+for s in "$root"/sys/kernel/debug/dri/*/state; do
+  r=$(readlink -f "$s")
+  [ -r "$s" ] && [[ "$seen" != *" $r "* ]] || continue
+  seen+="$r "
+  state=$(awk '
+    /^[a-z]+\[[0-9]+\]: / { kind = $0; sub(/\[.*/, "", kind); name = $0; sub(/^[^:]*: /, "", name); on = ""; by = ""; next }
+    kind == "crtc" && /^\tactive=/ { active = substr($0, 9) }
+    kind == "crtc" && /^\tmode: / { gsub(/[":]/, "", $2); print "  CRTC " name ": active=" active ", mode " $2 " at " $3 " Hz" }
+    kind == "connector" && /^\tcrtc=/ && $0 !~ /null/ { print "  connector " name " on " substr($0, 7) }
+    kind == "plane" && /^\tcrtc=/ { on = substr($0, 7) }
+    kind == "plane" && /^\t\tallocated by = / { by = $0; sub(/^.*= /, "", by) }
+    kind == "plane" && /^\tcrtc-pos=/ && on !~ /null/ && by != "" { print "  plane " name " on " on ": framebuffer of " by ", " substr($0, 11) }
+  ' "$s")
+  printf 'debugfs %s:\n%s\n' "${s#"$root"}" "$state"
+  planes+=$(grep -o 'framebuffer of [^,]*' <<<"$state" | sed 's/framebuffer of //')$'\n'
+done
+[ "$seen" != " " ] || echo "modes on the screen: not available: no readable debugfs state (/sys/kernel/debug/dri/*/state)"
+fb=$root/dev/fb0 fbs=$root/sys/class/graphics/fb0
+# xres yres xres_virtual yres_virtual xoffset yoffset bpp, red, green, blue
+# (offset, length): FBIOGET_VSCREENINFO 0x4600, else sysfs and the usual
+# formats.
+geo=$(perl -e 'open(my $f, "<", $ARGV[0]) or exit 1; my $v = "\0" x 160; ioctl($f, 0x4600, $v) or exit 1;
+  print join(" ", (unpack("L40", $v))[0 .. 6, 8, 9, 11, 12, 14, 15])' "$fb" 2>/dev/null) && how=FBIOGET_VSCREENINFO
+if [ -z "$geo" ] && [ -r "$fbs/virtual_size" ]; then
+  read -r xv yv < <(tr ',' ' ' <"$fbs/virtual_size")
+  case "$(rd "$fbs/bits_per_pixel")" in
+    32) geo="$xv $yv $xv $yv 0 0 32 16 8 8 8 0 8" ;;
+    16) geo="$xv $yv $xv $yv 0 0 16 11 5 5 6 0 5" ;;
+  esac
+  how="sysfs; the format assumed"
+fi
+stride=$(rd "$fbs/stride")
+[ -n "$stride" ] || geo=""
+# shellcheck disable=SC2086 # the numbers, one word each
+[ -z "$geo" ] || set -- $geo
+if [ -n "$geo" ]; then
+  echo "framebuffer: /dev/fb0 $(rd "$fbs/name"), ${1}x$2 shown of ${3}x$4 from $5,$6, $7 bits a pixel (red $8/$9, green ${10}/${11}, blue ${12}/${13}), $stride bytes a line ($how)"
+else
+  echo "framebuffer: not available: no /dev/fb0 with its geometry"
+fi
+echo "splash and console parameters: $(tr ' ' '\n' <<<"$cmdline" | grep -E '^(quiet|splash|plymouth\.|vt\.|fbcon=|console=|loglevel=|video=|i915\.|ironflockos\.)' | tr '\n' ' ')"
+echo "grub.cfg: $(grep -q splash.env "$esp/grub.cfg" 2>/dev/null && echo "with the splash" || echo "without the splash (installed before 0.17.0, or not readable)")"
+echo "grubenv: $(grub-editenv "$esp/grubenv" list 2>/dev/null | grep -E '^IRONFLOCKOS_(BOOT|CMDLINE)=' | tr '\n' ' ')"
+echo "splash.env, GRUB's colour: $(grub-editenv "$esp/splash.env" list 2>/dev/null | tr '\n' ' ')"
+echo "splash.cpio: $([ -f "$esp/splash.cpio" ] && echo "$(wc -c <"$esp/splash.cpio" | tr -d ' ') bytes: $(cpio -it --quiet <"$esp/splash.cpio" 2>/dev/null | sed 's|.*/||' | tr '\n' ' ')" || echo "none (IronFlock's logo on black)")"
+for f in splash.png splash.conf; do
+  p=$root/data/ironflockos/screen/$f
+  [ -e "$p" ] || {
+    echo "$f: none in /data/ironflockos/screen"
+    continue
+  }
+  echo "$f: $(wc -c <"$p" | tr -d ' ') bytes, $(bash "$here/splash" "check-${f#splash.}" "$p" 2>&1 && echo "taken")"
+  [ "$f" = splash.png ] || sed 's/^/  /' "$p"
+done
+
+# --- the screen now -----------------------------------------------------------
+section "What is on the screen now"
+mode=$(perl -e 'open(my $t, "<", $ARGV[0]) or exit 1; my $m = pack("L", 0); ioctl($t, 0x4B3B, $m) or exit 1;
+  print unpack("L", $m) ? "graphics" : "text"' "$root/dev/tty1" 2>/dev/null)
+echo "in front: $(rd "$root/sys/class/tty/tty0/active"); tty1 in ${mode:-an unknown} mode"
+others=$(grep -v '^\[fbcon\]$' <<<"$planes" | grep . | sort -u | tr '\n' ' ')
+# No debugfs state, or none that names whose framebuffers the planes show:
+# who has the graphics device open.
+if ! grep -q . <<<"$planes"; then
+  holders=$(for p in "$root"/proc/[0-9]*; do
+    for d in "$p"/fd/*; do
+      [[ "$(readlink "$d" 2>/dev/null)" != /dev/dri/card* ]] || {
+        echo "$(rd "$p/comm")(${p##*/})"
+        break
+      }
+    done
+  done | tr '\n' ' ')
+  if [ -n "$holders" ]; then
+    echo "shown: perhaps not the framebuffer device: the graphics device is open in $holders(/proc; no plane in debugfs to tell)"
+  else
+    echo "shown: the framebuffer device: no process has the graphics device open (/proc)"
+  fi
+elif [ -n "$others" ]; then
+  echo "shown: NOT the framebuffer device: a program draws, $others(the planes' framebuffers in debugfs); the figures below are of the framebuffer device only"
+else
+  echo "shown: the framebuffer device: the planes on the screen show its framebuffer, [fbcon] (debugfs)"
+fi
+pic=$theme/splash.png
+[ -f "$pic" ] || pic=$theme/ironflock.png
+hex=$(od -An -v -tx1 -j 16 -N 8 "$pic" 2>/dev/null | tr -d ' \n')
+bg=$(for c in red green blue; do sed -n "s/^background_$c = \([0-9]*\);\$/\1/p" "$theme/ironflockos.script" 2>/dev/null; done | xargs printf '%02x' 2>/dev/null)
+if journal -b -u ironflockos-splash.service | grep -q 'from the next boot on'; then
+  echo "note: the splash changed during this boot; the screen shows the one before, the figures compare with the new one"
+fi
+if [ -z "$geo" ] || [ "${#hex}" != 16 ] || [ "${#bg}" != 6 ]; then
+  echo "the framebuffer's pixels: not available: no framebuffer geometry, or no splash picture or colour in ${theme#"$root"}"
+  geo=""
+else
+  read -r pw ph px py < <(awk -v w="$1" -v h="$2" -v pw=$((16#${hex:0:8})) -v ph=$((16#${hex:8:8})) 'BEGIN {
+    if (pw > w || ph > h) { s = (w / pw < h / ph) ? w / pw : h / ph; pw = int(pw * s); ph = int(ph * s) }
+    print pw, ph, int((w - pw) / 2), int((h - ph) / 2) }')
+  echo "the splash: ${pic#"$root"} on #$bg (the theme's settings); its place: x $px..$((px + pw - 1)), y $py..$((py + ph - 1)) (${pw}x$ph, centred)"
+  # The background is a pixel within one step of each channel's value: the
+  # rounding of any format. A row of the background alone is compared whole.
+  # shellcheck disable=SC2016 # a perl program
+  stats=$(perl -e '
+    my ($f, $w, $h, $xo, $yo, $bpp, $ro, $rl, $go, $gl, $bo, $bl, $stride, $bg, $out) = @ARGV;
+    my $B = $bpp / 8; my $fmt = $B == 4 ? "V" : $B == 2 ? "v" : die "$bpp bits a pixel\n";
+    my @want = map { hex } unpack("(A2)3", $bg);
+    my @c = map { [$_->[0], (1 << $_->[1]) - 1, $_->[2]] } ([$ro, $rl, $want[0]], [$go, $gl, $want[1]], [$bo, $bl, $want[2]]);
+    my ($mask, $bgpx) = (0, 0);
+    for (@c) { $mask |= $_->[1] << $_->[0]; $bgpx |= int($_->[2] * $_->[1] / 255 + 0.5) << $_->[0] }
+    my ($mrow, $brow) = (pack($fmt, $mask) x $w, pack($fmt, $bgpx) x $w);
+    sub rgb { my $p = shift; map { int((($p >> $_->[0]) & $_->[1]) * 255 / $_->[1] + 0.5) } @c }
+    sub isbg { my $p = shift; for (@c) { return 0 if abs((($p >> $_->[0]) & $_->[1]) - $_->[2] * $_->[1] / 255) > 1 } 1 }
+    open(my $fh, "<", $f) or die "$f: $!\n";
+    my $o; if ($out ne "") { open($o, ">", $out) or die "$out: $!\n"; print $o "P6\n$w $h\n255\n" }
+    my ($n, $x0, $y0, $x1, $y1, $corner) = (0, $w, $h, -1, -1);
+    for my $y (0 .. $h - 1) {
+      seek($fh, ($yo + $y) * $stride + $xo * $B, 0) or die "seek: $!\n";
+      read($fh, my $raw, $w * $B) == $w * $B or die "$f: short read\n";
+      my $row = $raw & $mrow; my @p = unpack("$fmt*", $row);
+      $corner //= sprintf("%02x%02x%02x", rgb($p[0]));
+      print $o pack("C*", map { rgb($_) } @p) if $o;
+      if ($row eq $brow) { $n += $w; next }
+      for my $x (0 .. $w - 1) {
+        if (isbg($p[$x])) { $n++; next }
+        $x0 = $x if $x < $x0; $x1 = $x if $x > $x1; $y0 = $y if $y < $y0; $y1 = $y if $y > $y1;
+      }
+    }
+    if ($o) { close($o) or die "$out: $!\n" }
+    printf "%s %d %d %s\n", $corner, $n, $w * $h, $x1 < 0 ? "none" : "$x0 $y0 $x1 $y1";
+  ' "$fb" "$1" "$2" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "$stride" "$bg" "$shot" 2>&1)
+  read -r corner n total bx0 by0 bx1 by1 <<<"$stats"
+  if [[ ! "$n$total" =~ ^[0-9]+$ ]]; then
+    echo "the framebuffer's pixels: not available: $stats"
+  else
+    echo "corner pixel: #$corner"
+    echo "background #$bg: $(awk -v n="$n" -v t="$total" 'BEGIN { printf "%.2f", 100 * n / t }') % of the $total pixels"
+    where="outside it"
+    if [ "$bx0" = none ]; then
+      echo "the rest: nothing, the background only"
+    else
+      [ "$bx0" -lt "$px" ] || [ "$by0" -lt "$py" ] || [ "$bx1" -ge $((px + pw)) ] || [ "$by1" -ge $((py + ph)) ] || where="inside the splash's place"
+      echo "the rest: x $bx0..$bx1, y $by0..$by1 ($((bx1 - bx0 + 1))x$((by1 - by0 + 1))): $where"
+    fi
+    [ -z "$shot" ] || echo "screenshot: $shot (PPM, ${1}x$2)"
+  fi
+fi
+
+# --- input and keys -----------------------------------------------------------
+section "Input"
+compgen -G "$root/sys/class/input/event*" >/dev/null || echo "no input devices (/sys/class/input)"
+for e in "$root"/sys/class/input/event*; do
+  [ -e "$e" ] || continue
+  p=$(udevadm info -q property -n "/dev/input/${e##*/}" 2>/dev/null)
+  kinds=$(grep -oE '^ID_INPUT_[A-Z_]+=1' <<<"$p" | sed 's/^ID_INPUT_//; s/=1$//' | tr 'A-Z_' 'a-z ' | paste -sd, -)
+  echo "${e##*/}: $(rd "$e/device/name"); $(grep -qx 'ID_INPUT=1' <<<"$p" && echo "ID_INPUT=1" || echo "no ID_INPUT")${kinds:+: $kinds}; $(grep -E '^ID_(BUS|VENDOR_ID|MODEL_ID)=' <<<"$p" | tr '\n' ' ')"
+done
+
+section "The keys"
+echo "login prompts: $(systemctl list-units --no-legend --plain --state=active 'getty@*' 'autovt@*' 2>/dev/null | awk '{ printf "%s ", $1 }')(logind starts one on tty2 to tty6 at the first switch there)"
+user=$(jq -r '.user.name // empty' "$root/opt/ironflock/device-init/installed.json" 2>/dev/null)
+case "$(awk -F: -v u="$user" '$1 == u { print $2 }' "$root/etc/shadow" 2>/dev/null)" in
+  \$y\$*) kind="a yescrypt hash" ;;
+  \$6\$*) kind="a SHA-512 hash" ;;
+  '!'* | '*'*) kind="locked" ;;
+  *) kind="" ;;
+esac
+read -r pwmode _ pwuid _ < <(ls -ln "$root/data/ironflockos/console-password" 2>/dev/null)
+pwfile="the file: ${pwmode:-none}${pwuid:+, uid $pwuid}"
+if [ -n "$kind" ]; then echo "console password: $user's password is $kind; $pwfile"; else echo "console password: not available: no enrolled user (installed.json); $pwfile"; fi
+echo "  ironflockos-console-password: $(prop ironflockos-console-password.service Result); $(journal -b -u ironflockos-console-password.service | grep '^console-password:' | tail -n 1)"
+for e in "Start with messages" "Firmware setup"; do
+  echo "boot menu \"$e\": $(grep -q "menuentry \"$e\"" "$esp/grub.cfg" 2>/dev/null && echo "in grub.cfg" || echo "not in grub.cfg")"
+done
+ind=$(od -An -v -tx1 -j 4 -N 1 "$root"/sys/firmware/efi/efivars/OsIndicationsSupported-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' \n')
+if [ -n "$ind" ]; then
+  echo "restart into the firmware's setup: $([ $((16#$ind & 1)) = 1 ] && echo "supported" || echo "not supported") (OsIndicationsSupported)"
+else
+  echo "restart into the firmware's setup: not available: no EFI variables$noruntime; GRUB's fwsetup --is-supported decides at boot"
+fi
+
+section "The splash's services"
+for u in ironflockos-splash.service ironflockos-splash.path ironflockos-display.service plymouth-start.service; do
+  echo "$u: $(prop "$u" ActiveState) ($(prop "$u" SubState)), result $(prop "$u" Result)"
+done
+last=$(journal -u ironflockos-splash.service -o short-iso | grep 'refused:' | tail -n 1)
+echo "last refusal: ${last:-none in the journal}"
+last=$(journal -u ironflockos-splash.service -o short-iso | grep 'from the next boot on' | tail -n 1)
+echo "last splash taken: ${last:-none in the journal}"
+echo "keep-splash this boot: $(journal -b -u plymouth-quit.service | grep '^keep-splash:' | tr '\n' ' ')"
+echo "Plymouth crashed this boot: $(journal -b -u plymouth-start.service | grep -qE 'code=(killed|dumped)' && echo yes || echo no)"
+exit 0
