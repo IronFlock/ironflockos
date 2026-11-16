@@ -1,7 +1,8 @@
-# NVIDIA's firmware counts every boot nobody verified, and gives a slot up
-# after three. Two minutes after multi-user.target a slot that is not on trial
-# is marked good again (nvbootctrl verify through RAUC), so restarts without a
-# connection never use it up; the boot of a slot on trial is counted instead
+# NVIDIA's firmware counts every warm boot nobody verified, and gives a slot
+# up after three. Two minutes after multi-user.target a slot that is not on
+# trial is marked good again (nvbootctrl verify through RAUC), so restarts
+# without a connection never use it up. The boot of a slot on trial is counted
+# instead, and its second boot returns to the slot the update came from
 # (/usr/lib/ironflockos/tegra-slot-trial, docs/targets/jetson-orin.md).
 [Unit]
 Description=IronFlockOS: keep the booted slot, or count its trial

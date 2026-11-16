@@ -124,10 +124,8 @@ done
 check "RAUC's custom backend is tegra-rootfs-ab, executable" \
   bash -c "grep -qx bootloader-custom-backend=/usr/lib/ironflockos/tegra-rootfs-ab '$root/etc/rauc/system.conf' && test -x '$root/usr/lib/ironflockos/tegra-rootfs-ab'"
 check "tegra-slot-trial is executable" test -x "$root/usr/lib/ironflockos/tegra-slot-trial"
-for unit in ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer; do
-  check "$unit is enabled, and named in a preset for each slot's first boot" \
-    bash -c "systemctl --root='$root' -q is-enabled $unit && grep -qx 'enable $unit' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
-done
+check "ironflockos-tegra-keep.timer is enabled, and named in a preset for each slot's first boot" \
+  bash -c "systemctl --root='$root' -q is-enabled ironflockos-tegra-keep.timer && grep -qx 'enable ironflockos-tegra-keep.timer' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
 
 check "the agent is baked in" test -x "$root/usr/lib/ironflock/device-agent"
 check "ironflock is baked in as /usr/bin/ironflock" test -x "$root/usr/bin/ironflock"

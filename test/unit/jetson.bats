@@ -71,14 +71,14 @@ setup() {
   [ "$backend" = /usr/lib/ironflockos/tegra-rootfs-ab ]
   [ -x "$t/overlay$backend" ]
   [ -x "$t/overlay/usr/lib/ironflockos/tegra-slot-trial" ]
-  for unit in ironflockos-tegra-keep ironflockos-tegra-trial; do
-    grep -q "^ExecStart=-\?/usr/lib/ironflockos/tegra-slot-trial " "$t/overlay/usr/lib/systemd/system/$unit.service"
-    grep -qx 'WantedBy=timers.target' "$t/overlay/usr/lib/systemd/system/$unit.timer"
-    grep -qx "enable $unit.timer" "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
-  done
-  grep -q "enable ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer" "$repo/build/customize.sh"
-  grep -qx 'OnActiveSec=2min' "$t/overlay/usr/lib/systemd/system/ironflockos-tegra-keep.timer"
-  grep -qx 'OnActiveSec=15min' "$t/overlay/usr/lib/systemd/system/ironflockos-tegra-trial.timer"
+  units=$t/overlay/usr/lib/systemd/system
+  grep -qx 'ExecStart=-/usr/lib/ironflockos/tegra-slot-trial keep' "$units/ironflockos-tegra-keep.service"
+  grep -qx 'WantedBy=timers.target' "$units/ironflockos-tegra-keep.timer"
+  grep -qx 'OnActiveSec=2min' "$units/ironflockos-tegra-keep.timer"
+  grep -qx 'enable ironflockos-tegra-keep.timer' "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
+  grep -q 'enable ironflockos-tegra-keep.timer$' "$repo/build/customize.sh"
+  # No timer restarts a slot on trial: it gets one boot, as on the EFI targets.
+  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
   # NVIDIA's unit that would verify every boot stays masked.
   grep -q 'mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service' "$repo/build/customize.sh"
 }

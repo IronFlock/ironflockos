@@ -22,7 +22,6 @@ setup() {
   export IRONFLOCKOS_EFIVARS=$nv/efivars
   export IRONFLOCKOS_TEGRA_AB_STATE=$dir/data/rauc/state
   export IRONFLOCKOS_PROC_CMDLINE=$dir/cmdline
-  export IRONFLOCKOS_BOOT_ID=$dir/boot_id
   export IRONFLOCKOS_TEGRA_BACKEND=$backend
   # chattr: efivarfs's immutable flag; here a log of what was asked.
   printf '#!/bin/sh\necho "chattr $*" >>%s/chattr.log\n' "$dir" >"$dir/bin/chattr"
@@ -68,10 +67,9 @@ flashed() {
   echo 3 >"$nv/retry_B"
   running A
 }
-# running SLOT: the kernel command line and a boot id of a new boot of SLOT.
+# running SLOT: the kernel command line of a boot of SLOT.
 running() {
   echo "console=ttyTCU0,115200 root=PARTUUID=x rw rauc.slot=$1" >"$dir/cmdline"
-  echo "boot-$RANDOM-$RANDOM" >"$dir/boot_id"
 }
 status_of() { if [ "$(var_byte "$1")" = ff ]; then echo unbootable; else echo normal; fi; }
 other() { if [ "$1" = A ]; then echo B; else echo A; fi; }
@@ -385,11 +383,8 @@ install() {
 
 # --- the health gate: tegra-slot-trial with the firmware model --------------------
 
-# up: the timers of a boot that stays up (2 and 15 minutes).
-up() {
-  "$trial_tool" keep
-  "$trial_tool" deadline
-}
+# up: the timer of a boot that stays up two minutes.
+up() { "$trial_tool" keep; }
 
 @test "keep: a slot not on trial is marked good, so restarts never use it up" {
   run "$trial_tool" keep
@@ -408,140 +403,127 @@ up() {
 }
 
 @test "an update that the agent marks good stays" {
-  "$trial_tool" keep
+  up
   install
   boot
   [ "$(cat "$nv/current")" = B ]
   : >"$dir/rauc.log"
-  "$trial_tool" keep
+  up
   [ "$(state trial-boots)" = 1 ]
   # On trial the boot is counted, not kept.
   [ ! -s "$dir/rauc.log" ]
   [ "$(tail -n 1 "$nv/log")" != verify ]
-  # The device-agent reached the platform.
+  # The device-agent reached the platform, after however long.
   "$backend" set-state B good
-  "$trial_tool" deadline
-  [ "$(reboots)" = 0 ]
+  [ -z "$(state trial)" ]
   boot
   up
+  boot cold
+  up
   [ "$(cat "$nv/current")" = B ]
+  [ "$(reboots)" = 0 ]
   [ "$("$backend" get-primary)" = B ]
   [ "$("$backend" get-state A)" = good ]
   [ "$("$backend" get-state B)" = good ]
 }
 
-@test "an update that comes up but is never marked good: three warm boots, then the firmware falls back" {
-  "$trial_tool" keep
-  install
-  for n in 1 2 3; do
-    boot
-    [ "$(cat "$nv/current")" = B ]
-    up
-    [ "$(state trial-boots)" = "$n" ]
-    [ "$(reboots)" = "$n" ]
-  done
-  boot
-  [ "$(cat "$nv/current")" = A ]
-  [ "$(var_byte B)" = ff ]
+@test "an update never marked good: no time limit, and the next restart returns to the old slot" {
   up
+  install
+  boot
+  up
+  # Nothing restarts the device for want of a mark.
+  [ "$(reboots)" = 0 ]
+  [ "$(cat "$nv/current")" = B ]
+  [ "$(state trial)" = B ]
+  # The site's restart (warm here): the second boot of the trial gives it up.
+  boot
+  [ "$(cat "$nv/current")" = B ]
+  run "$trial_tool" keep
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"giving it up"* ]]
+  grep -qx 'rauc status mark-bad booted' "$dir/rauc.log"
+  [ "$(reboots)" = 1 ]
+  [ "$(cat "$nv/active")" = A ]
   [ -z "$(state trial)" ]
-  [ "$(state B)" = bad ]
-  [ "$(reboots)" = 3 ]
+  boot
+  up
+  [ "$(cat "$nv/current")" = A ]
+  [ "$(reboots)" = 1 ]
   [ "$("$backend" get-state B)" = bad ]
   [ "$("$backend" get-primary)" = A ]
   # The slot it came from stays, and the next update can use B again.
   boot
   up
-  [ "$(cat "$nv/current")" = A ]
-  [ "$(reboots)" = 3 ]
+  [ "$(reboots)" = 1 ]
   install
   [ "$(var_byte B)" = 00 ]
   [ "$(state trial)" = B ]
 }
 
+@test "a cold restart during the trial counts as a warm one does" {
+  up
+  install
+  boot cold
+  up
+  [ "$(state trial-boots)" = 1 ]
+  [ "$(reboots)" = 0 ]
+  # A power cut: the firmware starts its count over, the gate does not.
+  boot cold
+  [ "$(cat "$nv/current")" = B ]
+  [ "$(cat "$nv/retry_B")" = 2 ]
+  up
+  [ "$(reboots)" = 1 ]
+  [ "$(cat "$nv/active")" = A ]
+  boot
+  up
+  [ "$(cat "$nv/current")" = A ]
+  [ "$("$backend" get-state B)" = bad ]
+}
+
 @test "an update that does not boot: the firmware falls back after three warm boots" {
-  "$trial_tool" keep
+  up
   install
   for _ in 1 2 3; do
     boot
     [ "$(cat "$nv/current")" = B ]
-    # The kernel panics: panic=10 reboots warm before any timer.
+    # The kernel panics: panic=10 reboots warm before the timer.
   done
   boot
   [ "$(cat "$nv/current")" = A ]
   up
   [ -z "$(state trial)" ]
+  [ "$(state B)" = bad ]
   [ "$("$backend" get-state B)" = bad ]
   [ "$(reboots)" = 0 ]
 }
 
-@test "power cuts during the trial: the trial ends all the same, on the slot the update came from" {
-  "$trial_tool" keep
+@test "the trial gives up without a slot known to boot: the slot on trial stays" {
+  up
   install
-  # Every boot of the trial is cold: the firmware never counts down.
-  for n in 1 2 3; do
-    boot cold
-    [ "$(cat "$nv/current")" = B ]
-    "$trial_tool" keep
-    [ "$(state trial-boots)" = "$n" ]
-  done
-  boot cold
-  [ "$(cat "$nv/current")" = B ]
-  run "$trial_tool" keep
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"giving it up"* ]]
-  [ "$(cat "$nv/active")" = A ]
-  [ "$(reboots)" = 1 ]
-  [ -z "$(state trial)" ]
   boot
   up
-  [ "$(cat "$nv/current")" = A ]
-  [ "$(reboots)" = 1 ]
-  [ "$("$backend" get-state B)" = bad ]
-}
-
-@test "the trial gives up without a slot known to boot: the slot on trial stays" {
-  "$trial_tool" keep
-  install
-  boot
   # Meanwhile the firmware has given up the slot the update came from.
   set_var A unbootable
-  for _ in 1 2 3; do
-    "$trial_tool" keep
-    "$trial_tool" deadline
-    boot cold
-  done
+  boot
   run "$trial_tool" keep
   [ "$status" -eq 0 ]
   [[ "$output" == *"slot B stays"* ]]
   [ "$(cat "$nv/active")" = B ]
   [ -z "$(state trial)" ]
-  # Not on trial any more: kept from now on, no more reboots.
+  [ "$(reboots)" = 0 ]
+  # Not on trial any more: kept from now on, no reboots.
   boot
   up
   [ "$(cat "$nv/current")" = B ]
-  [ "$(reboots)" = 3 ]
+  [ "$(reboots)" = 0 ]
   [ "$(cat "$nv/retry_B")" = 3 ]
-}
-
-@test "deadline reboots only a counted boot of the slot on trial" {
-  "$trial_tool" deadline
-  [ "$(reboots)" = 0 ]
-  "$trial_tool" keep
-  install
-  boot
-  # keep did not run (or could not count): no reboot.
-  "$trial_tool" deadline
-  [ "$(reboots)" = 0 ]
-  "$trial_tool" keep
-  "$trial_tool" deadline
-  [ "$(reboots)" = 1 ]
 }
 
 @test "a pending update is not a fallback: the trial waits for its boot" {
   "$trial_tool" keep
   install
-  # The device has not rebooted into B yet; the timers run on A.
+  # The device has not rebooted into B yet; the timer runs on A.
   up
   [ "$(state trial)" = B ]
   [ "$(cat "$nv/active")" = B ]
@@ -566,6 +548,8 @@ up() {
   run "$trial_tool"
   [ "$status" -eq 2 ]
   run "$trial_tool" frobnicate
+  [ "$status" -eq 2 ]
+  run "$trial_tool" deadline
   [ "$status" -eq 2 ]
   echo "console=ttyTCU0" >"$dir/cmdline"
   run "$trial_tool" keep

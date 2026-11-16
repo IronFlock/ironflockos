@@ -210,10 +210,10 @@ else
   systemctl --root="$ROOT" enable ironflockos-console-password.service
   # GRUB counts every boot as a try; the Pi's tryboot counts only the first
   # boot of an update. NVIDIA's firmware counts every warm boot nobody
-  # verified: on Jetson a slot not on trial is kept, and a slot on trial is
-  # rebooted until the firmware falls back (tegra-slot-trial).
+  # verified: on Jetson a slot not on trial is kept, and a slot on trial gets
+  # one boot, as on the EFI targets (tegra-slot-trial).
   if [ "$BOOTLOADER" = tegra ]; then
-    systemctl --root="$ROOT" enable ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer
+    systemctl --root="$ROOT" enable ironflockos-tegra-keep.timer
   fi
   if [ "$BOOTLOADER" = grub-efi ]; then
     systemctl --root="$ROOT" enable ironflockos-slot-proven.path ironflockos-slot-keep.timer
@@ -288,9 +288,8 @@ if [ "$BOOTLOADER" = tegra ]; then
   [ -x "$ROOT/usr/bin/nvidia-container-runtime" ] || die "nvidia-container-runtime is missing"
   # The RAUC backend's tool (nvidia-l4t-bootloader-utils).
   [ -x "$ROOT/usr/sbin/nvbootctrl" ] || die "nvbootctrl is missing (nvidia-l4t-bootloader-utils)"
-  for unit in ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer; do
-    systemctl --root="$ROOT" is-enabled "$unit" >/dev/null || die "$unit is not enabled"
-  done
+  systemctl --root="$ROOT" is-enabled ironflockos-tegra-keep.timer >/dev/null ||
+    die "ironflockos-tegra-keep.timer is not enabled"
 fi
 
 # --- IronFlock: the agent and the host defaults, by ironflock bake -------
