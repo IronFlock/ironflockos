@@ -17,6 +17,7 @@ gguid=8be4df61-93ca-11d2-aa0d-00e098032b8c
 v3921=2556417 # 39.2.1 = 0x270201
 v3920=2556416
 v3930=2556672
+v3910=2556160 # 39.1.0: another generation than 39.2.x
 v3640=2360320 # 36.4.0
 spec=3767--0003--1--jetson-orin-nano-devkit-
 tnspec=3767-000-0003-G.0-1-1-jetson-orin-nano-devkit-nvme0n1p1
@@ -63,8 +64,13 @@ EOF
   echo boot-1 >"$dir/boot_id"
   printf 'TNSPEC %s\nCOMPATIBLE_SPEC %s\nTEGRA_CHIPID 0x23\n' "$tnspec" "$spec" >"$dir/nv_boot_control.conf"
   echo launcher-old >"$dir/esp/EFI/BOOT/BOOTAA64.efi"
-  module A "$v3920" "$v3920"
+  # Both chains one generation behind the new slot (39.1 against 39.2):
+  # the capsule is needed, and without it the slot is not switched to.
+  module A "$v3910" "$v3910"
   new_slot "$dir/slot" 39 2.1
+  # The running tree, for report.
+  new_slot "$dir/running" 39 2.1
+  export IRONFLOCKOS_ROOT=$dir/running
 }
 
 teardown() { rm -rf "$dir"; }
@@ -139,19 +145,19 @@ osind() { hex "$efi/OsIndications-$gguid"; }
 }
 
 @test "the version that counts is the target slot's boot chain, not the running one" {
-  # Slot A runs on 39.2.1; chain B still has 39.2.0 from before (each capsule
+  # Slot A runs on 39.2.1; chain B still has 39.1.0 from before (each capsule
   # writes only the chain of the slot it goes to).
-  module A "$v3921" "$v3920"
+  module A "$v3921" "$v3910"
   run "$tool" stage B "$dir/slot"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"the boot firmware of slot B is L4T 39.2.0, the slot needs L4T 39.2.1"* ]]
-  module B "$v3920" "$v3921"
+  [[ "$output" == *"the boot firmware of slot B is L4T 39.1.0, the slot needs L4T 39.2.1"* ]]
+  module B "$v3910" "$v3921"
   run "$tool" stage A "$dir/slot"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"slot A is L4T 39.2.0"* ]]
+  [[ "$output" == *"slot A is L4T 39.1.0"* ]]
 }
 
-@test "firmware needed, no maintenance window: the update does not switch slots" {
+@test "another generation's firmware, no maintenance window: the update does not switch slots" {
   run "$tool" stage B "$dir/slot"
   [ "$status" -eq 1 ]
   [[ "$output" == *"no maintenance window is open"* ]]
@@ -190,6 +196,111 @@ osind() { hex "$efi/OsIndications-$gguid"; }
   run "$tool" stage B "$dir/slot"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not a file of at most 4 KiB"* ]]
+}
+
+# --- stage: one generation, older firmware, no capsule ------------------------------
+
+@test "one generation, no window: the slot is switched to without the capsule, on older firmware" {
+  module A "$v3920" "$v3920"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the boot firmware of slot B is L4T 39.2.0, the slot needs L4T 39.2.1, and no maintenance window is open"* ]]
+  [[ "$output" == *"switching to slot B without the capsule; it runs on the older boot firmware L4T 39.2.0 until an OS update inside a maintenance window brings L4T 39.2.1"* ]]
+  not_staged
+  [ ! -e "$efi/OsIndications-$gguid" ]
+  [ -z "$(state capsule)" ]
+  # RAUC then switches as for an update without new firmware.
+  "$backend" set-state B bad
+  "$backend" set-primary B
+  grep -qx -- '-t rootfs set-active-boot-slot 1' "$nv/log"
+  [ "$(state trial)" = B ]
+}
+
+@test "one generation, window closed or not understood, or open with no capsule to stage: switched to without it" {
+  module A "$v3920" "$v3920"
+  for content in 'boot-firmware=no' 'boot-firmware=maybe' "boot-firmware=yes"$'\n'"until=1"; do
+    printf '%s\n' "$content" >"$dir/maintenance.conf"
+    run "$tool" stage B "$dir/slot"
+    [ "$status" -eq 0 ] || { echo "refused: $content"; return 1; }
+    [[ "$output" == *"switching to slot B without the capsule"* ]]
+  done
+  window 'boot-firmware=yes'
+  # a carrier board NVIDIA ships no capsule for
+  printf 'COMPATIBLE_SPEC 3767--0003--1--acme-carrier-\n' >"$dir/nv_boot_control.conf"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no capsule (or more than one) for this board"*"switching to slot B without the capsule"* ]]
+  # no board specs at all
+  rm "$dir/nv_boot_control.conf"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"names no COMPATIBLE_SPEC"*"without the capsule"* ]]
+  printf 'TNSPEC %s\nCOMPATIBLE_SPEC %s\nTEGRA_CHIPID 0x23\n' "$tnspec" "$spec" >"$dir/nv_boot_control.conf"
+  # no room on the ESP, no ESP, firmware without capsules on disk
+  IRONFLOCKOS_ESP_FREE_KB=900 run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the ESP has 900 KiB free"*"without the capsule"* ]]
+  printf '\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' >"$efi/OsIndicationsSupported-$gguid"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OsIndicationsSupported"*"without the capsule"* ]]
+  rm "$efi/OsIndicationsSupported-$gguid"
+  # Without efivarfs the chains' firmware cannot be read: refused, as unknown.
+  IRONFLOCKOS_EFIVARS=$dir/no-efivars run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is unknown (SystemFwVersions)"*"not switching"* ]]
+  not_staged
+}
+
+@test "one generation, window open and a capsule for the board: the capsule, as before" {
+  module A "$v3920" "$v3920"
+  window 'boot-firmware=yes'
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"staged NVIDIA's TEGRA_BL_3767.Cap"* ]]
+  staged
+}
+
+@test "still refused within one generation: a downgrade, a capsule below the lowest supported version" {
+  module A "$v3921" "$v3921"
+  new_slot "$dir/slot" 39 2.0
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not take the firmware back to an older version"* ]]
+  module A "$v3920" "$v3920"
+  new_slot "$dir/slot" 39 2.1
+  echo "$v3930" >"$dir/esrt/entries/entry0/lowest_supported_fw_version"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the ESRT's lowest supported version"* ]]
+}
+
+@test "still refused within one generation: the chain's firmware unknown or marked failed" {
+  rm "$efi/SystemFwVersions-$nvguid"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is unknown (SystemFwVersions), and no maintenance window is open"*"not switching"* ]]
+  module A "$v3921" "$v3921"
+  echo unbootable >"$nv/bl_status_B"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is marked failed, and no maintenance window is open"*"not switching"* ]]
+}
+
+@test "report: a slot running on older firmware shows the firmware behind" {
+  module A "$v3920" "$v3920"
+  run "$tool" report
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"slot A runs L4T 39.2.1 on the older boot firmware L4T 39.2.0: an OS update inside a maintenance window brings the firmware up"* ]]
+  grep -qx 'firmware-behind=yes' "$dir/run/boot-firmware"
+  grep -qx 'slot-release=39.2.1' "$dir/run/boot-firmware"
+  module A "$v3921" "$v3920"
+  run "$tool" report
+  grep -qx 'firmware-behind=no' "$dir/run/boot-firmware"
+  rm "$dir/running/etc/nv_tegra_release"
+  run "$tool" report
+  [ "$status" -eq 0 ]
+  grep -qx 'firmware-behind=unknown' "$dir/run/boot-firmware"
 }
 
 # --- stage: what it writes --------------------------------------------------------
@@ -288,7 +399,7 @@ osind() { hex "$efi/OsIndications-$gguid"; }
   module A "$v3640" "$v3640"
   run "$tool" stage B "$dir/slot"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"does not cross L4T generations (R36 to R39): the module needs a flash"* ]]
+  [[ "$output" == *"does not cross L4T releases (R36 to R39): the module needs a flash"* ]]
   module A "$v3930" "$v3930"
   run "$tool" stage B "$dir/slot"
   [ "$status" -eq 1 ]
