@@ -127,9 +127,8 @@ does:
   tries again at the next boot.
 
 So the firmware falls back only after three boots of a slot, all warm, that
-nobody verified. A system that comes up but never reaches the platform is
-not rebooted by anyone, and a power cut resets the count. The backend and the
-health gate below close both gaps.
+nobody verified, and a power cut resets the count. The backend and the health
+gate below make an updated slot follow the EFI targets' rule instead.
 
 ### The backend
 
@@ -177,42 +176,49 @@ r39.2.1 does" below).
 
 The device-agent marks the booted slot good once it has reached the platform
 (`rauc status mark-good`, device-agent 1.6.0), as on the other targets. On
-Jetson that is `nvbootctrl verify`. Two timers make the firmware's count mean
-"the device-agent has not marked the updated slot good"
-(`/usr/lib/ironflockos/tegra-slot-trial`):
+Jetson that is `nvbootctrl verify`. The trial of an updated slot follows the
+EFI targets' rule (`docs/build.md`, "Boot and A/B"; decided by Marko on
+2026-11-16): the slot gets one boot. During that boot the agent has no time
+limit, and nothing restarts the device because the agent has not marked the
+slot good. If the device restarts for any reason, warm or cold, before the
+mark, the slot the update came from boots next.
 
-- `ironflockos-tegra-keep.timer`, two minutes after `multi-user.target`: a
-  slot that is not on trial (a fresh flash, a slot the agent marked good, the
-  slot an update came from) is marked good through RAUC. Restarts without a
-  connection never use it up: unlike GRUB, which starts over with a good slot
-  when all were tried, NVIDIA's firmware ends in the recovery kernel. On the
-  slot on trial the boot is counted instead (`trial-boots`).
-- `ironflockos-tegra-trial.timer`, 15 minutes after `multi-user.target`: a
-  slot on trial that has not been marked good is rebooted (`systemctl
-  reboot`, warm; the hardware watchdog resets a system that hangs). Only a
-  boot that the first timer has counted, and at most three times.
-- From the fourth counted boot of a slot on trial (the firmware did not fall
-  back, for example because the boots were cold), the first timer marks it
-  bad through RAUC, which hands the next boot to the slot the update came
-  from, and reboots once. If RAUC refuses (that slot is not known good), the
-  trial ends and the slot on trial stays.
-- After the firmware fell back from a trial, the first timer ends the trial;
-  the slot tried reads as bad.
+`ironflockos-tegra-keep.timer` runs `/usr/lib/ironflockos/tegra-slot-trial
+keep` two minutes after `multi-user.target`:
+
+- On a slot that is not on trial (a fresh flash, a slot the agent marked good,
+  the slot an update came from), it marks the slot good through RAUC.
+  Restarts without a connection never use it up: unlike GRUB, which starts
+  over with a good slot when all were tried, NVIDIA's firmware ends in the
+  recovery kernel.
+- On the slot on trial, it counts the boot (`trial-boots`). On the second
+  counted boot it marks the slot bad through RAUC, which hands the next boot
+  to the slot the update came from, and reboots once. If RAUC refuses (that
+  slot is not known good), the trial ends and the slot on trial stays.
+- After the firmware fell back from a trial, it ends the trial; the slot
+  tried reads as bad.
+
+The one difference from the EFI targets: GRUB skips a tried slot before its
+kernel starts, while the Jetson boots the tried slot once more, for two
+minutes, and then restarts into the old one. NVIDIA's firmware cannot be told
+to skip it. A slot that cannot boot at all never reaches the timer; it still
+falls back through the firmware's three warm boots (`panic=10`, the hardware
+watchdog).
 
 The cases:
 
 | Case | What happens |
 |------|--------------|
-| The updated slot does not boot (kernel panic, root not mounted) | `panic=10` reboots warm; after three boots the firmware marks the slot unbootable and boots the slot the update came from, which is kept. The agent there reports the rollback |
-| The updated slot boots, the agent never marks it good | rebooted 15 minutes after each boot; after three boots the firmware falls back, as above. At most about 45 minutes on the new slot |
-| No network at all after an update | as above: the update does not stay, the device returns to the slot it came from and stays there, kept by the first timer. The platform can offer the update again later |
+| The updated slot does not boot (kernel panic, root not mounted, a hang) | `panic=10` or the hardware watchdog reboots warm; after three boots the firmware marks the slot unbootable and boots the slot the update came from, which is kept. The agent there reports the rollback |
+| The updated slot boots, the agent never marks it good | the device stays up on the new slot; nothing restarts it. At its next restart, warm or cold, the new slot boots once more for two minutes, is marked bad, and the device restarts into the slot the update came from |
+| No network at all after an update | as above: the device stays up on the new slot until its next restart, then returns to the old one and stays there, kept by the timer. The platform can offer the update again later |
 | No network on a slot that is not on trial (a fresh flash, a proven slot) | nothing is rebooted; the slot is kept two minutes after every boot and never falls back by counting |
-| A power cut during the trial | the cold boot gives the slot its three tries again, so the firmware does not count it; the trial's own count does. From the fourth counted boot the device returns to the slot it came from, at most once |
+| A power cut during the trial | counts as any restart: the next boot is the trial's second, which returns to the old slot. The firmware's own count starts over at a cold boot; the gate's count does not |
 | A power cut while RAUC writes the slot | the slot was marked unbootable before the write and the running slot is still the next boot: the device boots the old slot |
 | The agent marks the slot good | `nvbootctrl verify`; the trial ends and the slot stays |
 
-A device never loops: each trial ends after at most three timed reboots plus
-one return, and a slot not on trial is never rebooted by the gate.
+A device never loops: the gate restarts a device at most once per trial, to
+return to the old slot, and never restarts a slot that is not on trial.
 
 ### What nvbootctrl r39.2.1 does
 
@@ -247,8 +253,9 @@ Inferred, not proven: the exit codes (0 on success), the output of `set-active-b
   `rauc status` shows it booted and primary.
 - The forced fallback: install a bundle whose slot panics (for example with
   `init=/bin/false` in its `extlinux.conf`); after three boots the module is
-  back on the old slot, and `rauc status` shows the new one bad. And the same
-  with a slot that boots but has no network.
+  back on the old slot, and `rauc status` shows the new one bad. And a slot
+  that boots but has no network: it stays up; after a restart (warm, and once
+  cold) it is up for two minutes, then the module restarts into the old slot.
 
 ## Partition layout
 
@@ -330,7 +337,7 @@ files.
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
 `sudo test/image/jetson-rootfs-check.sh <work>/ironflockos-jetson-orin-base/rootfs`
 checks it: the versions, the sources and pins, kernel, initrd and `nvgpu`,
-units and masks, the RAUC backend and the health gate's timers, the baked
+units and masks, the RAUC backend and the health gate's timer, the baked
 agent and the `nvidia` runtime. It also runs the tree's binaries in a chroot:
 dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
 `ironflock`, `nvidia-ctk` and `nvidia-container-cli`. CI runs both on every

@@ -190,9 +190,10 @@ next slot with `nvbootctrl -t rootfs` and NVIDIA's `RootfsStatusSlotA/B`
 variables, and marking the running slot good is `nvbootctrl verify`. NVIDIA's
 firmware falls back after three warm boots nobody verified, and ends in its
 recovery kernel when both slots are given up. So `tegra-slot-trial` keeps every
-slot that is not on trial two minutes after each boot, and reboots an updated
-slot that the agent has not marked good within 15 minutes, at most three times,
-until the firmware falls back ([jetson-orin.md](targets/jetson-orin.md#ab-with-nvbootctrl)).
+slot that is not on trial two minutes after each boot, and gives an updated
+slot one boot, as GRUB does: when it starts a second time without the agent's
+mark, it is marked bad two minutes in and the device restarts into the old slot
+([jetson-orin.md](targets/jetson-orin.md#ab-with-nvbootctrl)).
 
 `IRONFLOCKOS_CMDLINE` in `grubenv` appends kernel parameters on both slots, for
 diagnosis in the field (`grub-editenv /boot/efi/EFI/BOOT/grubenv set

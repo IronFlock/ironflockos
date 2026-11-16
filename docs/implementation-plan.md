@@ -663,11 +663,13 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   written from the tool's format strings and NVIDIA's firmware source
   (`docs/targets/jetson-orin.md`, "What nvbootctrl r39.2.1 does"). The health gate is
   `tegra-slot-trial`: a slot not on trial is verified two minutes after each boot
-  (NVIDIA's firmware ends in its recovery kernel when both slots are given up), a slot
-  on trial that the agent has not marked good is rebooted after 15 minutes, at most
-  three times, and returned from by the gate itself when the firmware did not fall
-  back. The "failed enroll" of the scope is that: no mark from the agent. The switch
-  and the fallback on a module are WP-6.6's.
+  (NVIDIA's firmware ends in its recovery kernel when both slots are given up), and an
+  updated slot gets one boot, as on the EFI targets: no time limit for the agent, and
+  on the second boot without its mark the slot is marked bad and the device restarts
+  into the old slot. That rule replaces the scope's "watchdog-driven warm reboot on
+  failed enroll" (decided by Marko on 2026-11-16); the hardware watchdog still resets a
+  system that hangs, and a slot that does not boot falls back through the firmware's
+  three warm boots. The switch and the fallback on a module are WP-6.6's.
 
 ### WP-6.4 Orin Nano SD image and NX/AGX flash package (5 days)
 
