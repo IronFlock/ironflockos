@@ -2,15 +2,25 @@
 # The flash package of a jetson-orin image for an Orin on NVMe (WP-6.2 dry
 # run, WP-6.4): NVIDIA's l4t_initrd_flash.sh --no-flash with IronFlockOS's
 # partition layout and slot images, on the flashing host (x86_64 Ubuntu with
-# the BSP's prerequisites, tools/l4t_flash_prerequisites.sh). No Jetson is
-# needed: the board is named by its IDs (offline mode).
-#   sudo tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD BOARDID BOARDSKU
+# the BSP's prerequisites, tools/l4t_flash_prerequisites.sh). The flash kit
+# (build/jetson-flash.sh) runs it, then NVIDIA's --flash-only.
+#   sudo tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD [BOARDID BOARDSKU]
 #
 # L4T_DIR is the BSP's Linux_for_Tegra (build/fetch-bsp.sh), SLOT_IMAGE the
 # build's <image-id>-<version>.rootfs.ext4.zst, BOARD an NVIDIA board config
-# (jetson-orin-nano-devkit, jetson-agx-orin-devkit), BOARDID and BOARDSKU
-# the module's (README_initrd_flash.txt: 3767 0003 is an Orin Nano 8GB).
+# (jetson-orin-nano-devkit, jetson-agx-orin-devkit). With BOARDID and
+# BOARDSKU the package is made offline, with no Jetson attached (3767 0003 is
+# an Orin Nano 8GB; FAB, default 000, and BOARDREV, CHIP_SKU and RAMCODE are
+# taken from the environment where set). Without them NVIDIA's tools read
+# the module, which has to be attached in recovery mode.
 #
+# NVIDIA's workflow for rootfs A/B on NVMe (Flashing Support, r39.2.1), in
+# two runs of l4t_initrd_flash.sh --no-flash, both with ROOTFS_AB=1:
+# - internal: the QSPI firmware only (-p "-c flash_t234_qspi.xml"). Its UEFI
+#   gets the rootfs A/B setting (RootfsRedundancyLevel) from ROOTFS_AB=1;
+#   an AGX Orin's eMMC is not written;
+# - external, --external-only --append: the NVMe with IronFlockOS's layout.
+# What they take:
 # - the layout: build/tegra-layout.py from the BSP's NVMe rootfs A/B layout;
 # - APP: the slot image, which boots slot A; APP_b: the same image pointed at
 #   slot B (tegra-extlinux on its extlinux.conf, through debugfs);
@@ -29,13 +39,24 @@ src=$(cd "$here/.." && pwd)
 # shellcheck source=build/lib.sh
 . "$here/lib.sh"
 
-[ "$#" -eq 5 ] || die "usage: tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD BOARDID BOARDSKU"
-l4t=$(cd "$1" && pwd) slot_image=$2 board=$3 board_id=$4 board_sku=$5
+[ "$#" -eq 3 ] || [ "$#" -eq 5 ] || die "usage: tegra-flash-package.sh L4T_DIR SLOT_IMAGE BOARD [BOARDID BOARDSKU]"
+l4t=$(cd "$1" && pwd) slot_image=$2 board=$3 board_id=${4:-} board_sku=${5:-}
 [ "$(id -u)" = 0 ] || die "needs root (NVIDIA's flash tools mount and loop images)"
 [ "$(uname -m)" = x86_64 ] || die "NVIDIA's flash tools run on x86_64 hosts"
 [ -x "$l4t/tools/kernel_flash/l4t_initrd_flash.sh" ] || die "$l4t is not an unpacked BSP (no tools/kernel_flash/l4t_initrd_flash.sh)"
 [ -f "$l4t/$board.conf" ] || die "the BSP has no board $board"
-[[ "$board_id" =~ ^[0-9]{4}$ && "$board_sku" =~ ^[0-9]{4}$ ]] || die "BOARDID and BOARDSKU are four digits"
+# The board's identity: offline from the arguments and the environment, or
+# read from the module by NVIDIA's tools (an empty list).
+ids=()
+if [ "$#" -eq 5 ]; then
+  [[ "$board_id" =~ ^[0-9]{4}$ && "$board_sku" =~ ^[0-9]{4}$ ]] || die "BOARDID and BOARDSKU are four digits"
+  ids=("BOARDID=$board_id" "BOARDSKU=$board_sku" "FAB=${FAB:-000}")
+  for v in BOARDREV CHIP_SKU RAMCODE; do
+    if [ -n "${!v:-}" ]; then ids+=("$v=${!v}"); fi
+  done
+fi
+qspi_cfg=bootloader/generic/cfg/flash_t234_qspi.xml
+[ -f "$l4t/$qspi_cfg" ] || die "the BSP has no $qspi_cfg (the QSPI-only layout)"
 require zstd debugfs e2fsck python3
 load_conf "$src/targets/jetson-orin/target.conf"
 case "$(basename "$slot_image")" in
@@ -136,13 +157,21 @@ printf '%s\n' "$uuid_a" >"$bl/l4t-rootfs-uuid.txt_ext"
 printf '%s\n' "$uuid_b" >"$bl/l4t-rootfs-uuid.txt_b_ext"
 
 # --- the package -----------------------------------------------------------
+# NVIDIA's two runs; -r in both, so that neither builds bootloader/system.img
+# from the tree over the slot images. A package of an earlier run goes first:
+# the second run appends to the first one's.
 slot_bytes=$(size_bytes "$SLOT_SIZE_BASE")
+rm -rf "$kf/images"
+if [ ${#ids[@]} -gt 0 ]; then log "offline, as ${ids[*]}"; else log "the board's identity: read from the module"; fi
 (
   cd "$l4t"
-  BOARDID=$board_id BOARDSKU=$board_sku FAB=000 ROOTFS_AB=1 \
-    ./tools/kernel_flash/l4t_initrd_flash.sh --no-flash -r \
+  env ${ids[@]+"${ids[@]}"} ROOTFS_AB=1 \
+    ./tools/kernel_flash/l4t_initrd_flash.sh --showlogs --no-flash -r \
+    -p "-c $qspi_cfg" --network usb0 "$board" internal
+  env ${ids[@]+"${ids[@]}"} ROOTFS_AB=1 \
+    ./tools/kernel_flash/l4t_initrd_flash.sh --showlogs --no-flash -r \
     --external-device nvme0n1 -c "$layout" -S "$slot_bytes" \
-    --external-only "$board" external
+    --external-only --append --network usb0 "$board" external
 )
 # --- what the package holds: IronFlockOS's layout -------------------------------
 # flash.idx lists each partition: "<n>, <dev>:<name>, <start>, <size>, <file>,
@@ -157,4 +186,18 @@ grep -qE '^[0-9]+, [0-9]+:[0-9]+:data, [0-9]+, [0-9]+, , , expand-' "$idx" ||
   die "the package's data partition does not grow to the end of the disk"
 grep -qx 'external_device=nvme0n1' "$kf/images/external/flash.cfg" ||
   die "the package does not flash nvme0n1"
-log "flash package: $kf/images (APP and APP_b $SLOT_SIZE_BASE, data to the end of nvme0n1)"
+[ -n "$(ls -A "$kf/images/internal" 2>/dev/null)" ] ||
+  die "the package has no QSPI images ($kf/images/internal)"
+# Not checks, for the record (what WP-6.6 proves on a module): whether the
+# QSPI images name the rootfs A/B setting, and the nv_boot_control.conf
+# flash.sh wrote into the tree (the slot images, reused, do not get it).
+if grep -rqaF RootfsRedundancyLevel "$kf/images/internal" 2>/dev/null; then
+  log "the QSPI images name RootfsRedundancyLevel"
+else
+  warn "no QSPI image names RootfsRedundancyLevel"
+fi
+if [ -f "$l4t/rootfs/etc/nv_boot_control.conf" ]; then
+  log "flash.sh's nv_boot_control.conf (in $l4t/rootfs/etc, not in the slot images):"
+  sed 's/^/    /' "$l4t/rootfs/etc/nv_boot_control.conf" >&2
+fi
+log "flash package: $kf/images (QSPI; APP and APP_b $SLOT_SIZE_BASE, data to the end of nvme0n1)"
