@@ -35,7 +35,7 @@ texts were read from the files NVIDIA ships, not from summaries.
 | Flash package | Bootloader binaries, BCTs and partition images that NVIDIA's tools make from the BSP; NVIDIA's host flash tools; two NVIDIA scripts with IronFlockOS's `-r` fix; the layout `build/tegra-layout.py` makes from NVIDIA's XML | Planned for the release matrix (WP-6.4) | Built in CI, not published |
 | Flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` | None: IronFlockOS's scripts, which download the BSP and the Agreement from NVIDIA on the user's host (point 4) | Download server `ironflockos/<version>/`, with the first Jetson release | Built in CI (WP-6.4), not published |
 | Orin Nano SD image | The same for an SD card: kernel, DTB, ESP with L4TLauncher, recovery | FlockFlasher (WP-6.4) | Planned |
-| QSPI capsule `TEGRA_BL.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule | Inside the bundle (WP-6.5) | Planned |
+| QSPI capsules `TEGRA_BL_*.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule per carrier board, NVIDIA's own from `nvidia-l4t-bootloader` | In the slot image and the bundle (`/opt/ota_package/t23x`, WP-6.5) | Built in CI (WP-6.5) |
 | Repository | `targets/jetson-orin/apt/jetson-ota-public.asc`, NVIDIA's key file with the header `LicenseRef-NvidiaProprietary` | GitHub, public, Apache-2.0 | Now |
 
 IronFlockOS does not distribute NVIDIA's sample root filesystem (ADR-0008). It also does not
@@ -95,8 +95,8 @@ uses Canonical's binaries from `ports.ubuntu.com`.
 
 1. **NVIDIA's packages stay unchanged.** dpkg installs them from NVIDIA's repositories at
    the pinned version. The build changes none of their files. It writes its own
-   `extlinux.conf`, masks two of NVIDIA's units, and leaves out `nvidia-l4t-bootloader`,
-   `-extlinux`, `-apt-source` and `-configs` (target notes). The build excludes no
+   `extlinux.conf`, masks two of NVIDIA's units, and leaves out `nvidia-l4t-extlinux`,
+   `-apt-source` and `-configs` (target notes). The build excludes no
    documentation, so `/usr/share/doc/nvidia-l4t-*` keeps the Agreement and the notices.
    A check in `test/image/jetson-rootfs-check.sh` makes this a rule: every installed
    `nvidia-l4t-*` package has its `copyright` file (WP-6.8).
@@ -134,6 +134,11 @@ uses Canonical's binaries from `ports.ubuntu.com`.
    `l4t_generate_soc_capsule.sh` makes capsules only for carriers NVIDIA ships none for,
    and only after legal answers question 1 with yes. The bundle carries the FreeRTOS
    statement: version 8.1.2, and the offer that points at the source mirror (WP-6.5).
+   As built: `nvidia-l4t-bootloader` is installed in the image, so the capsules reach
+   the bundle with the package's own `copyright` (the Agreement) and
+   `LICENSE.bl_update_payload.gz` (the FreeRTOS licence); the build writes the
+   statement to `/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt` and fails when a
+   capsule's version is not the BSP pin's (`build/tegra-capsules.sh`).
 7. **The repository holds no file under NVIDIA's licence.** NVIDIA's layout files stay
    out already. `jetson-ota-public.asc` is replaced with the key as NVIDIA serves it at
    `https://repo.download.nvidia.com/jetson/jetson-ota-public.asc`. That file has the

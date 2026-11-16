@@ -46,8 +46,8 @@ profile has to meet. The trusted CAs (`ca.bats`) run against folders that
 stand for the IRONFLOCKOS partition, `/data` and the trust store, with a fake
 `update-ca-certificates` and certificates that `openssl` makes. The RAUC
 backends of the Raspberry Pi (`rpi-tryboot.bats`) and of Jetson
-(`tegra-rootfs-ab.bats`, with its health gate) run against fakes of the
-firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
+(`tegra-rootfs-ab.bats`, with its health gate; `tegra-capsule.bats`, its boot
+firmware lane) run against fakes of the firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
 checks"). They need bash, bats and openssl only:
 
 ```sh
@@ -499,9 +499,15 @@ packages at the pinned versions, the Ubuntu, Docker and NVIDIA sources with
 the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 `nvbootctrl` and the health gate's timer, units and masks (NVIDIA's
 `nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
-agent and Docker's `nvidia` runtime. It also runs the tree's binaries in a
-chroot, the backend among them (`docs/targets/jetson-orin.md`). It needs root
-and an arm64 host. The `jetson-flash` job then packs the flash kit
+agent and Docker's `nvidia` runtime, and the boot firmware lane: NVIDIA's
+capsules in `/opt/ota_package/t23x` unchanged against the package's
+checksums, the FreeRTOS statement, NVIDIA's licence texts, `tegra-capsule`,
+its report unit and the maintenance window's link. It also runs the tree's
+binaries in a chroot, the backend and `tegra-capsule` among them
+(`docs/targets/jetson-orin.md`). Given the bundle as a second argument, as CI
+does, it mounts the bundle and checks with `debugfs` that its `rootfs.ext4`
+carries the capsules, the statement and `tegra-capsule`. It needs root and an
+arm64 host. The `jetson-flash` job then packs the flash kit
 (`build/jetson-flash-kit.sh`, the artifact `jetson-flash-kit`) and runs it
 from its archive on an x86_64 runner, with `--no-flash`, as far as it goes
 without a module: NVIDIA's Agreement downloaded from NVIDIA and checked
@@ -536,8 +542,19 @@ command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
 nobody has recorded them on a module yet) and fake efivarfs files, and the
 update cases (marked good, never marked good and restarted, a cold restart
 during the trial, does not boot, no slot known good, no `/data`) against a
-model of NVIDIA's firmware that counts boots as its source does. The A/B switch and the forced fallback on a module
-are the hardware checklist (WP-6.6).
+model of NVIDIA's firmware that counts boots as its source does.
+`test/unit/tegra-capsule.bats` covers the boot firmware lane: `tegra-capsule
+stage` in every case (the chain already right, each reason it refuses, the
+window file's parsing, the bytes of `OsIndications` and the platform spec
+variables, the capsule's name and place on a fake ESP, the board's capsule by
+the firmware's spec rule), `withdraw` and `pending`, the backend with a
+staged capsule, an update through a model of the firmware that applies the
+capsule (and switches chain and slot) or rejects it, `report`, and
+`build/tegra-capsules.sh` against trees with fake FMP capsules (lock-step,
+missing capsules, a file that is no capsule, the package's version). The fake
+capsules carry only NVIDIA's board spec strings and an FMP header; nothing of
+NVIDIA's is in the repository. The A/B switch, the forced fallback and a
+capsule update on a module are the hardware checklist (WP-6.6).
 
 Both jobs run on every pull request when the repository variable `JETSON_CI`
 is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs

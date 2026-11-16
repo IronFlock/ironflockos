@@ -105,7 +105,7 @@ decision), in progress.
 | 6.2 | `jetson-orin` rootfs and layout | ironflockos | 6 | 6.1, 2.3 | done (#171, #173, #174, #177) |
 | 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | built (`tegra-rootfs-ab`, `tegra-slot-trial`, unit tests against `nvbootctrl`'s format; the Jetson CI jobs are back in `ci-ok`, behind `JETSON_CI`); open: the A/B switch and the forced fallback on a module (WP-6.6) |
 | 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | built: the flash kit (`build/jetson-flash.sh`, packed by `build/jetson-flash-kit.sh`), run in CI with `--no-flash` up to the flash itself, and host-side flashing in the target docs; open: the flash of a real module (WP-6.6), the kit's publication with the first Jetson release, and the SD image and the package's publication, both only if WP-6.8 allows them |
-| 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | open (licence review: NVIDIA's own capsules from `nvidia-l4t-bootloader`) |
+| 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | built (NVIDIA's own capsules from `nvidia-l4t-bootloader`, the build's lock-step check, `tegra-capsule` staged from `rauc-post-install`, the maintenance window file, the report after the restart, the FreeRTOS statement; unit tests against fakes of the firmware); open: a capsule update on a module (WP-6.6), the window's device-agent and Studio side, generated capsules for other carriers (WP-6.8) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
 | 6.7 | Follow-up: Jetson RT kernel | ironflockos | 5 | 6.6, 4b.1 | open |
 | 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | open (review done 2026-11-07; the sign-off is IronFlock's legal check) |
@@ -719,6 +719,23 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
 - Acceptance: on a module, a release carrying a capsule updates the inactive bootloader
   slot on the same reboot that switches rootfs slots, and a failed capsule leaves the
   device booting.
+- As built: with rootfs A/B the root slot is the boot chain, and NVIDIA's firmware
+  (edk2-nvidia `r39.2.1-updates`) writes the inactive chain from a capsule and then
+  boots it: the capsule is the switch of the root slot, and a pending
+  `BootChainFwNext` would make the firmware cancel both. So the hook stages the
+  capsule only when the boot chain of the slot just written lacks the slot's L4T
+  release (`SystemFwVersions`), and the backend then leaves the switch to it. NVIDIA
+  ships capsules for its developer kit carriers only, chosen by `COMPATIBLE_SPEC`
+  with the firmware's own spec rule, not by module type alone. When the capsule is
+  needed and the window is closed (or there is no capsule for the board, no room on
+  the ESP), the update does not switch slots: NVIDIA states no compatibility of a
+  root file system with older firmware, and the kernel runs on the firmware's
+  device tree. `tegra-capsule` writes `TegraPlatformSpec` and
+  `TegraPlatformCompatSpec` itself when it stages (the firmware matches the
+  capsule's images by them), so `nv-l4t-bootloader-config` stays masked. The window
+  is `/data/ironflockos/maintenance.conf`, a contract the device-agent and Studio
+  have yet to implement. Details: `docs/targets/jetson-orin.md`, "Boot firmware
+  updates".
 
 ### WP-6.6 Jetson hardware acceptance; FlockFlasher entries; target docs (5 days)
 

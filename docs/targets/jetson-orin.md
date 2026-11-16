@@ -4,13 +4,14 @@ NVIDIA Jetson AGX Orin, Orin NX and Orin Nano on Jetson Linux r39.2.1 (JetPack
 7.2.1) with an Ubuntu 24.04 userspace (ADR-0008; Phase 6). Work in progress:
 CI builds slot A's filesystem image and the RAUC bundle, checks the root tree
 and makes the flash package without a module (WP-6.2). The RAUC backend over
-`nvbootctrl` and the health gate are built and unit-tested (WP-6.3); nobody
-has run them on a module yet. The flash kit is built and runs in CI up to
-the flash itself (WP-6.4, [Flashing a module](#flashing-a-module)); nobody
-has flashed a module with it yet. Still to come:
+`nvbootctrl` and the health gate are built and unit-tested (WP-6.3), and so is
+the boot firmware lane with NVIDIA's capsules (WP-6.5); nobody has run them on
+a module yet. The flash kit is built and runs in CI up to the flash itself
+(WP-6.4, [Flashing a module](#flashing-a-module)); nobody has flashed a module
+with it yet. Still to come:
 
-- the QSPI lane (WP-6.5);
-- the first flash, the A/B switch and the forced fallback on a module (WP-6.6);
+- the first flash, the A/B switch, the forced fallback and a capsule update
+  on a module (WP-6.6);
 - the Orin Nano Developer Kit's SD image, only if IronFlock's legal check
   allows it (WP-6.8); until then the developer kit is flashed with the flash
   kit too.
@@ -43,9 +44,13 @@ The repositories' key is `targets/jetson-orin/apt/jetson-ota-public.asc`
 tests). It is the file `nvidia-l4t-apt-source` 39.2.1 ships, byte for byte the
 copy in the pinned BSP tarball, and it signs both repositories' `InRelease`.
 
+`nvidia-l4t-bootloader` is in: its UEFI capsules of the QSPI firmware are what
+an OS update brings to the boot chain ("Boot firmware updates" below). Its
+post-install script, which would stage a capsule through fwupd, does nothing
+in the build (the marker below).
+
 Left out on purpose:
 
-- `nvidia-l4t-bootloader`: the QSPI payloads; the QSPI firmware has its own lane (WP-6.5).
 - `nvidia-l4t-extlinux`: the build writes `extlinux.conf`.
 - `nvidia-l4t-apt-source`: the build writes the sources.
 - `nvidia-l4t-configs`: desktop, Weston and cloud-init settings.
@@ -63,7 +68,7 @@ IronFlockOS masks two of NVIDIA's boot-time services:
   `nvbootctrl verify` at every boot, which marks the boot successful. It would
   end the trial of every updated slot before the device-agent has reached the
   platform, and defeat the fallback. IronFlockOS's lane 2 updates the QSPI
-  firmware (WP-6.5); the health gate below verifies the boot.
+  firmware (`tegra-capsule`, below); the health gate below verifies the boot.
 - `nv-rootfs-validation-config` runs before it, and reboots when a user
   validation script (`/usr/sbin/user_rootfs_validation.sh`) fails: at every
   boot, without a bound. IronFlockOS has no such script.
@@ -72,8 +77,9 @@ Masking `nv-l4t-bootloader-config` also leaves out what else it does at boot:
 writing NVIDIA's platform spec variables (`TegraPlatformSpec`,
 `TegraPlatformCompatSpec`, which capsule updates check), the board spec in
 `/etc/nv_boot_control.conf`, mounting the ESP (the image's `/etc/fstab` does)
-and renaming old kernel partitions. The capsule lane has to do the spec
-variables (WP-6.5).
+and renaming old kernel partitions. `tegra-capsule` writes the two spec
+variables, by NVIDIA's rule, when it stages a capsule ("Boot firmware
+updates").
 
 NVIDIA's `nvidia-l4t-init` also sets the hardware watchdog to 120 seconds
 (`/etc/systemd/system.conf.d/watchdog.conf`), which comes after IronFlockOS's
@@ -264,6 +270,255 @@ Inferred, not proven: the exit codes (0 on success), the output of `set-active-b
   back on the old slot, and `rauc status` shows the new one bad. And a slot
   that boots but has no network: it stays up; after a restart (warm, and once
   cold) it is up for two minutes, then the module restarts into the old slot.
+
+## Boot firmware updates
+
+The QSPI firmware (MB1, MB2, BPMP, SPE, RCE, OP-TEE, TF-A, UEFI) is lane 2 of
+[ADR-0007](../adr/0007-update-mechanism-rauc-and-firmware-lanes.md): it
+travels with the OS release. The capsule is NVIDIA's own, unchanged, from
+`nvidia-l4t-bootloader` at the pinned version (licence review, point 6); none
+is generated (`l4t_generate_soc_capsule.sh` waits for WP-6.8's legal check).
+Nobody has run this on a module yet (WP-6.6).
+
+### How NVIDIA's firmware applies a capsule
+
+From edk2-nvidia, branch `r39.2.1-updates` (`PlatformBm.c`, `TegraFmp.c`,
+`BootChainDxe.c`, `FwPackageLib.c`, `FmpVersionLibPartition.c`,
+`L4TRootfsValidation.c`; BSD-2-Clause-Patent), and NVIDIA's own scripts in
+`nvidia-l4t-bootloader` and `nvidia-l4t-bootloader-utils` 39.2.1:
+
+- At boot, before the OS, UEFI looks for a capsule on the ESP when bit 2 of
+  `OsIndications` is set (capsule on disk). It marks the running boot chain
+  good, takes the capsule and resets, and the next start processes it, before
+  anything else of the boot chain switch.
+- The capsule writes the boot chain that does not run (it marks it bad
+  first, writes and verifies every image, then good) and then makes it the
+  active chain in the BR-BCT, and resets cold. It never writes the running
+  chain.
+- With rootfs A/B (`RootfsRedundancyLevel` 1) the root slot is the boot
+  chain: chain A boots `APP`, chain B `APP_b`. So the capsule **is** the switch
+  of the root slot: the reboot that applies the capsule boots the other root
+  slot on the firmware just written. There is no separate switch.
+- While `BootChainFwNext` or `BootChainFwStatus` exists, the firmware
+  cancels the capsule (last attempt status `0x1813`) and with it the pending
+  switch of `BootChainFwNext`. `nvbootctrl -t rootfs set-active-boot-slot`
+  sets `BootChainFwNext`, and no firmware code deletes `BootChainFwStatus`
+  after a switch. So with a capsule nobody may ask for a switch through
+  `nvbootctrl`, and an old status has to go.
+- The firmware picks the capsule's images by the board: each image carries
+  a spec such as `3767-000-0003--1-0-jetson-orin-nano-devkit-`, matched field
+  by field against `TegraPlatformCompatSpec` (an empty field matches any). An
+  unset variable matches no board image, and the capsule is rejected (`0x1807`,
+  image not in package) before anything is written.
+  `nv-l4t-bootloader-config` sets the variable at every boot; IronFlockOS
+  masks it.
+- The firmware of both chains is in `SystemFwVersions` (set by the firmware at
+  every boot from the chains' VER partitions: UINT32 A, UINT32 B, as
+  `0xRRRRMMmm`, 39.2.1 = `0x270201`); the running one also in the ESRT
+  (`/sys/firmware/efi/esrt/entries/entry0/fw_version`) and in DMI's
+  `bios_version`. The ESRT's `last_attempt_version` and `last_attempt_status`
+  say how the last capsule went.
+- A capsule must not be older than the firmware's lowest supported version.
+  NVIDIA's capsules of 39.2.1 give their own version as the lowest (their FMP
+  payload header), so after one of them nothing older is taken (inferred from
+  edk2's FmpDxe, which keeps the last capsule's lowest version). NVIDIA's own
+  installer path refuses capsules on firmware older than R38: across
+  generations a module is flashed.
+
+NVIDIA's `nvidia-l4t-bootloader` ships capsules for NVIDIA's carrier boards
+only, picked by the board name in `COMPATIBLE_SPEC` of
+`/etc/nv_boot_control.conf`:
+
+| Capsule | Boards (the specs inside) |
+|---------|---------------------------|
+| `TEGRA_BL_3767.Cap` | Orin NX and Orin Nano (P3767 SKUs 0000 to 0005) on the Orin Nano developer kit carrier (`jetson-orin-nano-devkit`) |
+| `TEGRA_BL_3767_super.Cap` | the same in the developer kit's "super" configuration |
+| `TEGRA_BL_3767_nanoe8gb.Cap`, `_nanoe8gb_super.Cap` | `jetson-orin-nanoe8gb-devkit` |
+| `TEGRA_BL_3701_agx.Cap`, `_000.Cap`, `_agx_super.Cap`, `_agx_ind.Cap` | AGX Orin developer kit (fab 300, fab 000 and older, super, industrial) |
+
+A module on another carrier board gets no capsule from NVIDIA; for it the
+lane needs a generated one (WP-6.8 first).
+
+### What an OS update does
+
+The lock-step rule: the firmware of the chain of slot X is the L4T release
+slot X was built for. The flash writes both chains from the BSP pin
+(`bsp.conf`), and an update keeps the rule for the slot it writes. After RAUC
+has written the other slot, `rauc-post-install` carries
+`/etc/nv_boot_control.conf` into it and runs
+`/usr/lib/ironflockos/tegra-capsule stage <slot> <mount>`, before the switch:
+
+| The chain of the new slot | Window | What happens |
+|---------------------------|--------|--------------|
+| has the slot's L4T release (`/etc/nv_tegra_release` of the slot) and is not marked failed | any | no capsule; RAUC switches the slot through `nvbootctrl`, as before |
+| another release, unknown, or failed | open | NVIDIA's capsule for this board, from the new slot's `/opt/ota_package/t23x`, is staged (below); the capsule switches the slot |
+| another release, unknown, or failed | closed | the install fails with the reason: the slot is not switched to, the device stays on the slot it runs |
+
+Staging, as NVIDIA's `nv_bootloader_capsule_updater.sh` and the package's
+post-install script do it:
+
+1. `BootChainFwNext` and `BootChainFwStatus` are deleted (above);
+2. `TegraPlatformSpec` is written from `TNSPEC` if it does not exist, and
+   `TegraPlatformCompatSpec` from `COMPATIBLE_SPEC` whenever it differs
+   (attributes 7, the string, `chattr +i`): NVIDIA's rule, but only here, so
+   nothing verifies the boot;
+3. the capsule goes to `EFI/UpdateCapsule/` on the ESP under its own name
+   (`TEGRA_BL_3767.Cap`), written to a temporary name and renamed; NVIDIA's
+   L4TLauncher of the same release to `EFI/BOOT/BOOTAA64.efi`;
+4. `OsIndications` is written as NVIDIA writes it: attributes 7, the UINT64 4
+   (bit 2, file capsule delivery);
+5. the backend's state on `/data` names the slot, the capsule and the boot.
+
+The backend (`tegra-rootfs-ab set-primary`) then sees the capsule: it makes
+the slot bootable and puts it on trial as always, but leaves the switch to the
+capsule; `get-primary` names that slot until the restart. RAUC writing the
+slot again (`set-state bad`) or keeping the running slot withdraws the capsule
+(file and bit). A capsule never outlives the restart it was staged for.
+
+The capsule is chosen by the firmware's own rule: of the new slot's
+`TEGRA_BL_<board id>*.Cap`, the one whose board specs match `COMPATIBLE_SPEC`
+field by field. None or more than one: no capsule for this board.
+
+Cases in which the capsule is needed but not staged, so the update does not
+switch slots (the journal and RAUC's error say which):
+
+- no maintenance window open (below);
+- no `COMPATIBLE_SPEC` in `/etc/nv_boot_control.conf`, or no capsule for this
+  board in the new slot;
+- the ESP is not mounted at `/boot/efi`, or has less room than the capsule,
+  L4TLauncher and 1 MiB (NVIDIA's capsules of 39.2.1 are 12 to 52 MB);
+- no efivarfs, or `OsIndicationsSupported` without bit 2;
+- the chain has another L4T generation (a flash), or a newer release, or the
+  ESRT's lowest supported version is above the slot's release (a capsule
+  cannot go back);
+- the new slot names no L4T release.
+
+Because a capsule writes only the chain it switches to, the chain of the slot
+an update leaves keeps its old firmware: that is the rollback. After a new
+L4T release, the next update into the other slot needs the window again, to
+bring that chain up too.
+
+**A new slot on old firmware.** NVIDIA makes no compatibility statement for
+an L4T root filesystem on the boot firmware of another minor release. The
+kernel boots with the device tree the firmware hands over (the image's
+`extlinux.conf` names no `FDT`), so firmware and kernel come from different
+releases there. NVIDIA's own flows never run that way for long: apt
+upgrades stage the capsule before the reboot, and its developer kit's SD
+image updates the QSPI firmware on its first boot when it is older (which
+shows that a newer minor release does start on older firmware, at least that
+far). Not sure enough to run a fleet on it, IronFlockOS does not switch to a
+slot whose chain has another release: the update waits for a window.
+
+### The maintenance window
+
+A device setting from the platform, off by default:
+`/etc/ironflockos/maintenance.conf`, which links to
+`/data/ironflockos/maintenance.conf`. The contract for the device-agent and
+Studio (neither implements it yet):
+
+```ini
+boot-firmware=yes    # yes: an OS update may update the boot firmware; no (default)
+until=1763625600     # optional: the window ends then, in seconds since 1970 (UTC)
+```
+
+- No file, `boot-firmware=no`, a time past `until`, or a file it does not
+  understand (another key, a value twice, more than 4 KiB): the window is
+  closed, and the journal says why.
+- It is read when an OS update is installed. A capsule staged inside the
+  window is applied at the next restart, which `perform_os_update` does right
+  after the install; so the platform opens the window, runs the update with
+  its restart, and closes the window by removing the file. A staged capsule
+  that the firmware has not taken by the next restart is removed then.
+- A factory reset removes it with the rest of `/data/ironflockos`.
+- Updates that need no firmware do not read it.
+
+### After the restart
+
+`ironflockos-tegra-capsule.service` runs `tegra-capsule report` at every
+boot, before the health gate's timer. For a capsule staged in an earlier
+boot it decides, in this order:
+
+| Result | When |
+|--------|------|
+| `applied` | the device runs the capsule's slot, and the ESRT's firmware version is the capsule's; or the ESRT's last attempt was the capsule's version with status 0 and the device fell back afterwards |
+| `not-processed` | the capsule is still on the ESP |
+| `failed` | otherwise; with the ESRT's last attempt status when it is the capsule's version |
+
+It then removes any capsule from the ESP and bit 2 from `OsIndications`, and
+for a result other than `applied` marks the capsule's slot bad through RAUC
+(`rauc status mark-bad other`): the slot was written for firmware it did not
+get, so neither the firmware nor RAUC may switch to it. The result is in the
+journal and in `/run/ironflockos/boot-firmware`, rewritten at every boot,
+which the device-agent can read:
+
+```ini
+slot-a-firmware=39.2.1        # SystemFwVersions, or unknown
+slot-b-firmware=39.2.1
+running-firmware=39.2.1       # the ESRT
+last-attempt-version=39.2.1
+last-attempt-status=0         # the ESRT's; NVIDIA's codes from 0x1800 (6144)
+capsule-result=applied        # of the last capsule: applied, not-processed, failed, or empty
+capsule-slot=B
+capsule-version=39.2.1
+```
+
+`report` never fails the boot.
+
+### When it fails
+
+| Case | What happens |
+|------|--------------|
+| The firmware rejects the capsule (wrong board spec, version below the lowest supported, cancelled, bad signature) | nothing is written; the chain and the root slot stay; the device boots the old slot on the old firmware. `report`: `failed`, the slot is marked bad. The health gate finds the trial's slot not booted and keeps the old one |
+| A write or verify of the capsule fails | the inactive chain stays marked failed; the active chain is untouched and boots the old slot. As above; the next update into that slot needs a capsule again (the chain reads as failed) |
+| Power lost while the capsule is written | the active chain is untouched (the capsule writes only the other); the next start boots it, and the capsule is lost or taken again. Field reports of boot loops after such a power loss on r36.4.0 are why the window exists; to prove on r39.2.1 (WP-6.6) |
+| The new chain does not start (MB1, MB2 or UEFI fails) | NVIDIA's boot ROM and MB1 are to fall back to the other chain after failed starts (bootloader redundancy as NVIDIA's developer guide describes it; the code is closed and was not checked); that chain boots the old slot. `report`: `failed`. UEFI marks a chain good as soon as it reaches its boot manager, so this covers only firmware that fails before that |
+| The new chain starts, the new slot does not boot | L4TLauncher counts three warm boots, marks the slot unbootable and switches through `BootChainFwNext` to the old chain, with the old firmware and the old slot. `report`: `applied`, fell back |
+| The new slot boots, the agent never marks it good | the health gate as above ("The health gate"): the old slot, through `BootChainFwNext`, on its old chain |
+| Power lost after staging, before RAUC's switch | the capsule applies and switches to the new slot, which RAUC marked unbootable before writing it: L4TLauncher switches back to the old chain and slot at once |
+
+No case loops: the firmware's own fallbacks are bounded, `report` restarts
+nothing, and the health gate restarts at most once per trial.
+
+### To prove on a module (WP-6.6)
+
+- `SystemFwVersions`, the ESRT and DMI read as above on a flashed module, both
+  chains 39.2.1; the flash writes `TegraPlatformCompatSpec`, or `stage` writes
+  it, and `/etc/nv_boot_control.conf` is in both slots (WP-6.4) with the
+  `COMPATIBLE_SPEC` NVIDIA's `nv-l4t-bootloader-config` would compute;
+- the update across an L4T release with a capsule: the firmware writes the
+  other chain and boots the other slot on the same reboot; `report` says
+  `applied`; and the rollback to the old pair;
+- a rejected capsule (a module whose spec the capsule lacks): the device stays
+  on the old slot, `report` says `failed`;
+- whether `nvbootctrl -t rootfs set-active-boot-slot` deletes
+  `BootChainFwStatus`, and which words `nvbootctrl dump-slots-info` prints for
+  a failed bootloader slot;
+- the L4TLauncher copy: NVIDIA's updater copies it with the capsule; whether
+  the old chain starts the new L4TLauncher after a rollback;
+- a power loss during the capsule write, several times.
+
+### At build time
+
+`build/tegra-capsules.sh` checks the tree after the packages are in: capsules
+for boards 3767 and 3701 and L4TLauncher in `/opt/ota_package/t23x`; every
+capsule a UEFI FMP capsule whose firmware version (its FMP payload header) is
+`L4T_VERSION` of `bsp.conf`, the BSP the flash kit writes the QSPI firmware
+from; `nvidia-l4t-bootloader` at `L4T_PACKAGE_VERSION`; the tree's
+`/etc/nv_tegra_release` at `L4T_VERSION`; NVIDIA's licence texts of the
+package. Any difference fails the build: QSPI and root file system stay in
+lock-step. It cannot compare the capsule's images with the ones the flash kit
+makes from the BSP; on a module, the ESRT's version after a flash and after a
+capsule is the comparison that remains.
+
+It then writes the FreeRTOS statement the licence review asks for (point 6):
+`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`, from
+`targets/jetson-orin/freertos-offer.txt`, with the FreeRTOS version (V8.1.2)
+of the SPE firmware in the capsules and the offer of its source at the source
+mirror of the release (`<DL_BASE>/ironflockos/sources/l4t-<version>/`,
+WP-6.8). It is in the image and so in every bundle, next to NVIDIA's own texts
+that come with the package: the Driver License Agreement
+(`/usr/share/doc/nvidia-l4t-bootloader/copyright`) and the FreeRTOS licence
+(`LICENSE.bl_update_payload.gz`).
 
 ## Partition layout
 
@@ -510,8 +765,13 @@ Only a module can prove (WP-6.6):
 without a module: every command of the backend in every state and failure,
 against a fake `nvbootctrl` and fake efivarfs files, and the cases above
 against a model of NVIDIA's firmware that counts boots as
-`L4TRootfsValidation.c` does. `test/unit/jetson.bats` checks the target's
-files. `test/unit/jetson-flash-kit.bats` tests the flash kit with fakes of
+`L4TRootfsValidation.c` does. `test/unit/tegra-capsule.bats` tests the boot
+firmware lane the same way: every case of `stage` (each reason to skip or
+refuse, the variables' bytes, the capsule's place and name, the window file),
+the backend with a staged capsule, an update through a model of the firmware
+that applies or rejects the capsule, `report`, and the build's check.
+`test/unit/jetson.bats` checks the target's files.
+`test/unit/jetson-flash-kit.bats` tests the flash kit with fakes of
 NVIDIA's BSP and Agreement, a release catalog signed with a throwaway key and
 a fake ESP image: the order of its steps (nothing of NVIDIA's before the
 Agreement is accepted, nothing unpacked before the checksums), the boards,
@@ -521,8 +781,11 @@ the `.flock` and the archive.
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
 `sudo test/image/jetson-rootfs-check.sh <work>/ironflockos-jetson-orin-base/rootfs`
 checks it: the versions, the sources and pins, kernel, initrd and `nvgpu`,
-units and masks, the RAUC backend and the health gate's timer, the baked
-agent and the `nvidia` runtime. It also runs the tree's binaries in a chroot:
+units and masks, the RAUC backend and the health gate's timer, the capsules
+(unchanged against the package's checksums), the FreeRTOS statement and the
+boot firmware report, the baked agent and the `nvidia` runtime. Given the
+bundle as well, it checks that the bundle's `rootfs.ext4` carries the
+capsules, the statement and `tegra-capsule`. It also runs the tree's binaries in a chroot:
 dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
 `ironflock`, `nvidia-ctk` and `nvidia-container-cli`. CI runs both on every
 pull request (`jetson-rootfs` in `ci.yml`, with the bundle), and makes the
@@ -535,13 +798,14 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
   BSP's `rootfs/`, and with `-r` it does not reach the slot images (the
   `jetson-flash` job prints the one it wrote). `nvbootctrl` reads the chip id
   from it and falls back to the device tree without it (its strings);
-  NVIDIA's OTA tools and capsule scripts need it. The flash package does not
-  put it into APP and APP_b (WP-6.4 decided so): it describes the module, and
-  every update brings a slot without it, so the device has to write it
-  itself at boot, as NVIDIA's masked `nv-l4t-bootloader-config` does. That
-  goes with the capsule lane, which needs it (WP-6.5).
-- The first flash of a module, the A/B switch and the forced fallback
-  (WP-6.6, above).
+  NVIDIA's OTA tools and capsule scripts need it, and so does
+  `tegra-capsule` (`COMPATIBLE_SPEC`, `TNSPEC`). The flash package does not
+  put it into APP and APP_b (WP-6.4 decided so): it describes the module.
+  `rauc-post-install` carries it into every slot it writes, but nothing
+  creates it on a module flashed with the kit yet, so no capsule can be
+  staged there.
+- The first flash of a module, the A/B switch, the forced fallback and a
+  capsule update (WP-6.6, above).
 - eMMC as the system disk (AGX Orin without NVMe): `build/tegra-layout.py`
   knows NVIDIA's NVMe layout only.
 - Licences ([jetson-licence-review.md](../jetson-licence-review.md); done
@@ -556,4 +820,5 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
   - the flash package stays a CI test, and users get the flash kit, which
     downloads the BSP and the Agreement from NVIDIA and asks for acceptance
     (WP-6.4, [Flashing a module](#flashing-a-module));
-  - the QSPI capsule comes unchanged from `nvidia-l4t-bootloader` (WP-6.5).
+  - the QSPI capsule comes unchanged from `nvidia-l4t-bootloader` (WP-6.5,
+    built: "Boot firmware updates").
