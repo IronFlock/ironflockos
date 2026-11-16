@@ -78,8 +78,9 @@ setup() {
   grep -qx 'enable ironflockos-tegra-keep.timer' "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
   grep -q 'enable ironflockos-tegra-keep.timer$' "$repo/build/customize.sh"
   # No timer restarts a slot on trial: it gets one boot, as on the EFI targets.
-  # The boot firmware report runs once per boot (WP-6.5).
-  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-capsule.service\nironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
+  # The board's nv_boot_control.conf and the boot firmware report run once per
+  # boot (WP-6.5).
+  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-board-conf.service\nironflockos-tegra-capsule.service\nironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
   # NVIDIA's unit that would verify every boot stays masked.
   grep -q 'mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service' "$repo/build/customize.sh"
 }

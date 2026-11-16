@@ -217,6 +217,9 @@ else
     # Lane 2 (WP-6.5): the boot firmware capsule's result at every boot, and
     # the platform's maintenance window, which lets an OS update write it.
     systemctl --root="$ROOT" enable ironflockos-tegra-capsule.service
+    # The module's nv_boot_control.conf, from the ESP where the flash kit
+    # put it, for nvbootctrl and the capsule lane.
+    systemctl --root="$ROOT" enable ironflockos-tegra-board-conf.service
     mkdir -p "$ROOT/etc/ironflockos"
     ln -sfn /data/ironflockos/maintenance.conf "$ROOT/etc/ironflockos/maintenance.conf"
   fi
@@ -299,8 +302,9 @@ if [ "$BOOTLOADER" = tegra ]; then
   # NVIDIA's boot firmware capsules (nvidia-l4t-bootloader): in lock-step with
   # the BSP pin, with the FreeRTOS statement and source offer (WP-6.5).
   bash "$here/tegra-capsules.sh" "$ROOT"
-  systemctl --root="$ROOT" is-enabled ironflockos-tegra-capsule.service >/dev/null ||
-    die "ironflockos-tegra-capsule.service is not enabled"
+  for unit in ironflockos-tegra-capsule.service ironflockos-tegra-board-conf.service; do
+    systemctl --root="$ROOT" is-enabled "$unit" >/dev/null || die "$unit is not enabled"
+  done
 fi
 
 # --- IronFlock: the agent and the host defaults, by ironflock bake -------

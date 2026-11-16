@@ -253,8 +253,9 @@ jobs:
   # the BSP from the cache keyed on its pin (targets/jetson-orin/bsp.conf),
   # checked before it is unpacked; NVIDIA's host prerequisites; the flash
   # package offline for an Orin Nano 8GB developer kit (QSPI and NVMe, both
-  # with rootfs A/B; build/tegra-flash-package.sh); a test .flock on the
-  # package's ESP, read back, and off again at the end. Only the flash
+  # with rootfs A/B; build/tegra-flash-package.sh); a test .flock and
+  # flash.sh's nv_boot_control.conf on the package's ESP, read back, and off
+  # again at the end. Only the flash
   # itself (l4t_initrd_flash.sh --flash-only) needs a module (WP-6.6).
   jetson-flash:
     needs: [jetson-rootfs]
@@ -302,7 +303,9 @@ jobs:
             "$RUNNER_TEMP"/kit/ironflockos-jetson-flash-kit-*/ironflockos-jetson-flash \
             --board jetson-orin-nano-devkit --no-flash --board-id 3767 --board-sku 0003 --chip-sku 00:00:00:D5 \
             --accept-nvidia-license --image "$slot" --sha256 "$sha" --flock "$RUNNER_TEMP/ci-test.flock" \
-            --work /mnt/kit-work --cache "$HOME/ironflockos-bsp-cache"
+            --work /mnt/kit-work --cache "$HOME/ironflockos-bsp-cache" 2>&1 | tee "$RUNNER_TEMP/kit.log"
+          # flash.sh's nv_boot_control.conf went onto the ESP (WP-6.5).
+          grep -q "flash.sh's nv_boot_control.conf is on the ESP" "$RUNNER_TEMP/kit.log"
       - name: the package keeps no .flock
         run: |
           k=/mnt/kit-work/Linux_for_Tegra/tools/kernel_flash
@@ -310,6 +313,7 @@ jobs:
           [ "$(sudo sha1sum "$k/images/external/$esp" | cut -d' ' -f1)" = "$sha1" ]
           sudo mdir -i "$k/images/external/$esp" ::/ | tee "$RUNNER_TEMP/esp.txt"
           if grep -qi 'flock' "$RUNNER_TEMP/esp.txt"; then echo "a .flock stayed on the package's ESP"; exit 1; fi
+          if grep -qi 'nv_boot' "$RUNNER_TEMP/esp.txt"; then echo "nv_boot_control.conf stayed on the package's ESP"; exit 1; fi
           sudo test ! -e "$k/images.ironflockos-orig"
       - name: what the package holds
         if: ${{ always() }}

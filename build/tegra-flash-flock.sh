@@ -5,6 +5,8 @@
 # /boot/efi, where ironflockos-enroll looks for *.flock at the first boot.
 #   tegra-flash-flock.sh check FLOCK
 #   tegra-flash-flock.sh put IMAGES FLOCK
+#   tegra-flash-flock.sh check-board CONF
+#   tegra-flash-flock.sh put-board IMAGES CONF
 #   tegra-flash-flock.sh remove IMAGES
 #
 # IMAGES is the package, L4T_DIR/tools/kernel_flash/images
@@ -20,8 +22,12 @@
 # is mounted), read it back, and give flash.idx the image's new SHA-1. The
 # ESP's image and flash.idx are kept as they were in IMAGES.ironflockos-orig,
 # outside the package, for remove.
-# remove: the ESP's image and flash.idx as they were before put; the package
-# keeps no .flock. Nothing to do when put did not run.
+# put-board: NVIDIA's nv_boot_control.conf, which flash.sh wrote for the
+# module (TNSPEC, COMPATIBLE_SPEC, TEGRA_CHIPID), the same way into the ESP's
+# root, after put. The slot images do not carry it (they are the release's,
+# for every module); the device copies it to /etc at boot (tegra-board-conf).
+# remove: the ESP's image and flash.idx as they were before the first put;
+# the package keeps no .flock. Nothing to do when put did not run.
 #
 # Without a .flock the package flashes a device that boots and waits for
 # one (ironflockos-enroll), as a FlockFlasher image without a .flock does.
@@ -30,7 +36,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=build/lib.sh
 . "$here/lib.sh"
 
-usage() { die "usage: tegra-flash-flock.sh check FLOCK | put IMAGES FLOCK | remove IMAGES"; }
+usage() { die "usage: tegra-flash-flock.sh check FLOCK | put IMAGES FLOCK | check-board CONF | put-board IMAGES CONF | remove IMAGES"; }
 
 # check_flock FLOCK
 check_flock() {
@@ -105,14 +111,15 @@ remove_flock() {
   log "the .flock is off the package's ESP again"
 }
 
-# put_flock IMAGES FLOCK
-put_flock() {
-  local images=$1 flock=$2 idx=$1/external/flash.idx entry line file size sha1 esp name tmp new
-  check_flock "$flock"
+# esp_put IMAGES FILE NAME: FILE into the ESP's FAT image as NAME (mtools,
+# nothing is mounted), read back, and flash.idx given the image's new SHA-1.
+# The first put keeps the ESP's image and flash.idx as they were in
+# IMAGES.ironflockos-orig, outside the package, for remove; later ones add to
+# it.
+esp_put() {
+  local images=$1 src=$2 name=$3 idx=$1/external/flash.idx entry line file size sha1 esp tmp new
   require mcopy mdir sha1sum cmp
   export MTOOLS_SKIP_CHECK=1
-  # An earlier put that was not removed: start from the package as made.
-  remove_flock "$images"
   entry=$(esp_entry "$images")
   read -r line file size sha1 <<<"$entry"
   esp=$images/external/$file
@@ -120,23 +127,24 @@ put_flock() {
   [ "$(size_of "$esp")" = "$size" ] || die "the ESP's image is not the size flash.idx gives ($size bytes)"
   [ -z "$sha1" ] || [ "$(sha1_of "$esp")" = "$sha1" ] ||
     die "the ESP's image does not have the SHA-1 flash.idx gives: the index is not what this script knows"
-  mdir -i "$esp" ::/ >/dev/null 2>&1 || die "the ESP's image $esp is not a FAT file system: cannot put the .flock on it"
-  mkdir -m 0700 "$images.ironflockos-orig"
-  cp -p "$esp" "$images.ironflockos-orig/esp"
-  cp -p "$idx" "$images.ironflockos-orig/flash.idx"
-  name=$(flock_name "$flock")
+  mdir -i "$esp" ::/ >/dev/null 2>&1 || die "the ESP's image $esp is not a FAT file system: cannot put $name on it"
+  if [ ! -d "$images.ironflockos-orig" ]; then
+    mkdir -m 0700 "$images.ironflockos-orig"
+    cp -p "$esp" "$images.ironflockos-orig/esp"
+    cp -p "$idx" "$images.ironflockos-orig/flash.idx"
+  fi
   tmp=$(mktemp -d)
   chmod 0700 "$tmp"
-  if ! mcopy -o -i "$esp" "$flock" "::/$name" >/dev/null 2>&1; then
+  if ! mcopy -o -i "$esp" "$src" "::/$name" >/dev/null 2>&1; then
     rm -rf "$tmp"
     remove_flock "$images"
-    die "cannot copy the .flock into the ESP's image"
+    die "cannot copy $name into the ESP's image"
   fi
-  if ! { mcopy -n -i "$esp" "::/$name" "$tmp/back" >/dev/null 2>&1 && cmp -s "$flock" "$tmp/back"; } ||
+  if ! { mcopy -n -i "$esp" "::/$name" "$tmp/back" >/dev/null 2>&1 && cmp -s "$src" "$tmp/back"; } ||
     [ "$(size_of "$esp")" != "$size" ]; then
     rm -rf "$tmp"
     remove_flock "$images"
-    die "the .flock read back from the ESP's image is not the file given"
+    die "$name read back from the ESP's image is not the file given"
   fi
   rm -f "$tmp/back"
   if [ -n "$sha1" ]; then
@@ -150,7 +158,41 @@ put_flock() {
     fi
   fi
   rm -rf "$tmp"
-  log "the .flock is on the ESP as $name (flash.idx line $line)"
+  esp_line=$line
+}
+
+# put_flock IMAGES FLOCK
+put_flock() {
+  local name
+  check_flock "$2"
+  # An earlier put that was not removed: start from the package as made.
+  remove_flock "$1"
+  name=$(flock_name "$2")
+  esp_put "$1" "$2" "$name"
+  log "the .flock is on the ESP as $name (flash.idx line $esp_line)"
+}
+
+# check_board CONF: the nv_boot_control.conf NVIDIA's flash.sh wrote for the
+# module: text of at most 4 KiB naming TNSPEC, COMPATIBLE_SPEC and
+# TEGRA_CHIPID once each, as "KEY value" (the device's tegra-board-conf takes
+# the same rule).
+check_board() {
+  local f=$1 k
+  [ -f "$f" ] || die "$f is not a file"
+  [ "$(wc -c <"$f" | tr -d ' ')" -le 4096 ] || die "$f is larger than 4 KiB: not NVIDIA's nv_boot_control.conf"
+  ! LC_ALL=C grep -q '[^[:print:][:space:]]' "$f" || die "$f is not text: not NVIDIA's nv_boot_control.conf"
+  for k in TNSPEC COMPATIBLE_SPEC TEGRA_CHIPID; do
+    [ "$(awk -v k="$k" '$1 == k && NF == 2 && $2 ~ /^[A-Za-z0-9._-]+$/ { n++ } $1 == k { m++ } END { print n + 0, m + 0 }' "$f")" = "1 1" ] ||
+      die "$f does not name $k once, as \"$k value\""
+  done
+}
+
+# put_board IMAGES CONF: flash.sh's nv_boot_control.conf onto the ESP, where
+# the device copies it to /etc at every boot (tegra-board-conf, WP-6.5).
+put_board() {
+  check_board "$2"
+  esp_put "$1" "$2" nv_boot_control.conf
+  log "flash.sh's nv_boot_control.conf is on the ESP (flash.idx line $esp_line): $(awk '$1 == "COMPATIBLE_SPEC" { print $2 }' "$2")"
 }
 
 case "${1:-}" in
@@ -162,6 +204,15 @@ case "${1:-}" in
   put)
     [ "$#" -eq 3 ] || usage
     put_flock "$2" "$3"
+    ;;
+  check-board)
+    [ "$#" -eq 2 ] || usage
+    check_board "$2"
+    log "$2: NVIDIA's nv_boot_control.conf"
+    ;;
+  put-board)
+    [ "$#" -eq 3 ] || usage
+    put_board "$2" "$3"
     ;;
   remove)
     [ "$#" -eq 2 ] || usage

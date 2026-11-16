@@ -26,9 +26,11 @@
 # 5. the module in recovery mode on USB, of the board named;
 # 6. the flash package (build/tegra-flash-package.sh), read from the module,
 #    or offline from --board-id and --board-sku with --no-flash;
-# 7. the .flock on the package's ESP (build/tegra-flash-flock.sh put);
+# 7. the .flock on the package's ESP (build/tegra-flash-flock.sh put), and
+#    the nv_boot_control.conf flash.sh wrote for the module (put-board);
 # 8. NVIDIA's l4t_initrd_flash.sh --flash-only (not with --no-flash);
-# 9. at the end, whatever happened: the .flock off the package again.
+# 9. at the end, whatever happened: the .flock and the conf off the package
+#    again.
 #
 # IRONFLOCKOS_KIT_SKIP_HOST_CHECK, IRONFLOCKOS_CATALOG_KEY, IRONFLOCKOS_BSP_CONF:
 # for the unit tests only.
@@ -166,7 +168,7 @@ chmod 0700 "$work"
 # --- 9. at the end: no .flock stays in the package --------------------------
 package=''
 cleanup() {
-  if [ -n "$package" ] && [ -n "$flock" ] && [ -d "$package" ]; then
+  if [ -n "$package" ] && [ -d "$package" ]; then
     bash "$here/tegra-flash-flock.sh" remove "$package" || warn "the .flock may still be in $package: delete $work"
   fi
 }
@@ -329,6 +331,15 @@ if [ -n "$flock" ]; then
   bash "$here/tegra-flash-flock.sh" put "$package" "$flock"
 else
   log "no --flock: the device boots and waits for its .flock (on its ESP, /boot/efi)"
+fi
+# The module's nv_boot_control.conf, as NVIDIA's flash.sh wrote it: the device
+# takes it from its ESP at every boot (tegra-board-conf). Without it the
+# device runs all the same, but its boot firmware cannot be updated.
+board_conf=$l4t/rootfs/etc/nv_boot_control.conf
+if [ -f "$board_conf" ] && bash "$here/tegra-flash-flock.sh" check-board "$board_conf"; then
+  bash "$here/tegra-flash-flock.sh" put-board "$package" "$board_conf"
+else
+  warn "no nv_boot_control.conf from flash.sh to put on the ESP: the device runs, but cannot update its boot firmware"
 fi
 
 # --- 8. the flash ----------------------------------------------------------

@@ -155,6 +155,8 @@ check "tegra-capsule is executable, rauc-post-install stages with it and keeps n
   bash -c "test -x '$root/usr/lib/ironflockos/tegra-capsule' && grep -q 'capsule_tool\" stage' '$root/usr/lib/ironflockos/rauc-post-install' && grep -q '/etc/nv_boot_control.conf' '$root/usr/lib/ironflockos/rauc-post-install'"
 check "ironflockos-tegra-capsule.service is enabled, and named in the preset" \
   bash -c "systemctl --root='$root' -q is-enabled ironflockos-tegra-capsule.service && grep -qx 'enable ironflockos-tegra-capsule.service' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
+check "tegra-board-conf takes the module's nv_boot_control.conf from the ESP at boot, and the image carries none of its own" \
+  bash -c "test -x '$root/usr/lib/ironflockos/tegra-board-conf' && systemctl --root='$root' -q is-enabled ironflockos-tegra-board-conf.service && grep -qx 'enable ironflockos-tegra-board-conf.service' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset' && test ! -e '$root/etc/nv_boot_control.conf'"
 check "the maintenance window is the device's, on /data" \
   bash -c "[ \"\$(readlink '$root/etc/ironflockos/maintenance.conf')\" = /data/ironflockos/maintenance.conf ]"
 
@@ -190,6 +192,8 @@ check "chroot: the RAUC backend runs (and refuses an unknown command)" \
   bash -c "chroot '$root' /usr/lib/ironflockos/tegra-rootfs-ab frobnicate 2>&1 | grep -q 'unknown command'"
 check "chroot: tegra-capsule runs (and refuses an unknown command)" \
   bash -c "chroot '$root' /usr/lib/ironflockos/tegra-capsule frobnicate 2>&1 | grep -q 'unknown command'"
+check "chroot: tegra-board-conf runs, and without the ESP's file changes nothing" \
+  bash -c "chroot '$root' /usr/lib/ironflockos/tegra-board-conf | grep -q 'no nv_boot_control.conf on the ESP' && test ! -e '$root/etc/nv_boot_control.conf'"
 check "chroot: the linker finds libnvidia-ml" bash -c "chroot '$root' ldconfig -p | grep -q 'libnvidia-ml.so.1 '"
 # libcuda of both GPU flavours is under /opt/nvidia/l4t-gpu-libs; NVIDIA's
 # nv-load-gpu-libs links the board's (nvgpu on Orin) into the linker's path

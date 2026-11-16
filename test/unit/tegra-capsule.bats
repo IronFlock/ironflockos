@@ -633,6 +633,10 @@ built_tree() {
 }
 
 @test "the image: the package, the check, the report unit, the window's link, the post-install hook" {
+  grep -q 'enable ironflockos-tegra-board-conf.service' "$repo/build/customize.sh"
+  grep -qx 'enable ironflockos-tegra-board-conf.service' "$repo/targets/jetson-orin/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
+  grep -qx 'ExecStart=-/usr/lib/ironflockos/tegra-board-conf' "$repo/targets/jetson-orin/overlay/usr/lib/systemd/system/ironflockos-tegra-board-conf.service"
+  grep -qx 'Before=ironflockos-tegra-capsule.service ironflockos-tegra-keep.service' "$repo/targets/jetson-orin/overlay/usr/lib/systemd/system/ironflockos-tegra-board-conf.service"
   grep -qx nvidia-l4t-bootloader "$repo/targets/jetson-orin/packages"
   grep -q 'bash "$here/tegra-capsules.sh" "$ROOT"' "$repo/build/customize.sh"
   grep -q 'enable ironflockos-tegra-capsule.service' "$repo/build/customize.sh"
@@ -643,4 +647,65 @@ built_tree() {
   pi=$repo/overlay/usr/lib/ironflockos/rauc-post-install
   grep -q 'files="/etc/machine-id /etc/hostname /etc/nv_boot_control.conf"' "$pi"
   grep -q '"$capsule_tool" stage "$bootname" "$mnt" || fail' "$pi"
+}
+
+# --- the module's nv_boot_control.conf from the ESP ----------------------------
+
+board="$repo/targets/jetson-orin/overlay/usr/lib/ironflockos/tegra-board-conf"
+esp_conf() {
+  printf 'TNSPEC %s\nCOMPATIBLE_SPEC %s\nTEGRA_LEGACY_UPDATE false\nTEGRA_CHIPID 0x23\n' "$tnspec" "$spec" >"$dir/esp/nv_boot_control.conf"
+}
+
+@test "board conf: the ESP's file goes to /etc when /etc has none, or another" {
+  rm "$dir/nv_boot_control.conf"
+  esp_conf
+  run "$board"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"copied the module's nv_boot_control.conf from the ESP to $dir/nv_boot_control.conf ($spec)"* ]]
+  cmp "$dir/esp/nv_boot_control.conf" "$dir/nv_boot_control.conf"
+  [ "$(stat -c %a "$dir/nv_boot_control.conf" 2>/dev/null || stat -f %Lp "$dir/nv_boot_control.conf")" = 644 ]
+  run "$board"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is the module's ($spec)"* ]]
+  printf 'TNSPEC old\nCOMPATIBLE_SPEC old\nTEGRA_CHIPID 0x23\n' >"$dir/nv_boot_control.conf"
+  run "$board"
+  [ "$status" -eq 0 ]
+  cmp "$dir/esp/nv_boot_control.conf" "$dir/nv_boot_control.conf"
+  [ ! -e "$dir/nv_boot_control.conf.new" ]
+}
+
+@test "board conf: no file on the ESP, or one that is not NVIDIA's, leaves /etc as it is and never fails" {
+  cp "$dir/nv_boot_control.conf" "$dir/before"
+  run "$board"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no nv_boot_control.conf on the ESP; $dir/nv_boot_control.conf stays as it is"* ]]
+  cmp "$dir/before" "$dir/nv_boot_control.conf"
+  for bad in 'TNSPEC x' $'TNSPEC x\nCOMPATIBLE_SPEC y\nTEGRA_CHIPID 0x23\nTNSPEC z' $'TNSPEC x y\nCOMPATIBLE_SPEC y\nTEGRA_CHIPID 0x23'; do
+    printf '%s\n' "$bad" >"$dir/esp/nv_boot_control.conf"
+    run "$board"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"is not NVIDIA's nv_boot_control.conf"* ]]
+    cmp "$dir/before" "$dir/nv_boot_control.conf"
+  done
+  rm "$dir/esp/nv_boot_control.conf" "$dir/nv_boot_control.conf"
+  run "$board"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no nv_boot_control.conf on the ESP or in /etc: nvbootctrl uses its fallback, and no boot firmware capsule can be staged"* ]]
+  esp_conf
+  IRONFLOCKOS_BOOT_CTRL_CONF=$dir/nowhere/nv_boot_control.conf run "$board"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not write $dir/nowhere/nv_boot_control.conf"* ]]
+}
+
+@test "board conf, then a capsule: on a module flashed with the kit, /etc gets the specs the capsule is chosen by" {
+  rm "$dir/nv_boot_control.conf"
+  esp_conf
+  window 'boot-firmware=yes'
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"names no COMPATIBLE_SPEC"* ]]
+  "$board"
+  run "$tool" stage B "$dir/slot"
+  [ "$status" -eq 0 ]
+  staged
 }

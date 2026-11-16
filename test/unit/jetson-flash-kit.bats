@@ -354,3 +354,58 @@ targets/jetson-orin/target.conf 0o644 0 1700000000"
   [ "$status" -ne 0 ] && [[ "$output" == *"has to be accepted"* ]]
   nothing_of_nvidia_unpacked
 }
+
+# --- the module's nv_boot_control.conf on the package's ESP (WP-6.5) ---------
+
+# board_conf FILE: an nv_boot_control.conf of flash.sh's shape (the values of
+# the CI's offline flash of an Orin Nano 8GB).
+board_conf() {
+  printf 'TNSPEC 3767-000-0003--1-0-jetson-orin-nano-devkit-nvme0n1p1\nCOMPATIBLE_SPEC 3767--0003--1--jetson-orin-nano-devkit-\nTEGRA_LEGACY_UPDATE false\nTEGRA_CHIPID 0x23\n' >"$1"
+}
+
+@test "put-board: flash.sh's nv_boot_control.conf goes onto the ESP next to the .flock; remove takes both off" {
+  fake_package
+  board_conf "$dir/nv_boot_control.conf"
+  "$flocktool" put "$pkg" "$dir/dev-1.flock"
+  run "$flocktool" put-board "$pkg" "$dir/nv_boot_control.conf"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"flash.sh's nv_boot_control.conf is on the ESP (flash.idx line 2): 3767--0003--1--jetson-orin-nano-devkit-"* ]]
+  cmp -s "$dir/nv_boot_control.conf" "$pkg/external/esp.img.files/nv_boot_control.conf"
+  cmp -s "$dir/dev-1.flock" "$pkg/external/esp.img.files/dev-1.flock"
+  [ "$(cut -d' ' -f8 <(sed -n 2p "$pkg/external/flash.idx"))" = "$(sha1 "$pkg/external/esp.img")" ]
+  "$flocktool" remove "$pkg"
+  cmp -s "$pkg/external/esp.img" "$dir/esp.orig"
+  cmp -s "$pkg/external/flash.idx" "$dir/idx.orig"
+  # without a .flock too
+  run "$flocktool" put-board "$pkg" "$dir/nv_boot_control.conf"
+  [ "$status" -eq 0 ]
+  "$flocktool" remove "$pkg"
+  cmp -s "$pkg/external/esp.img" "$dir/esp.orig"
+}
+
+@test "check-board refuses what is not flash.sh's nv_boot_control.conf, before the ESP is touched" {
+  fake_package
+  board_conf "$dir/good.conf"
+  run "$flocktool" check-board "$dir/good.conf"
+  [ "$status" -eq 0 ]
+  grep -v '^COMPATIBLE_SPEC' "$dir/good.conf" >"$dir/nocompat.conf"
+  { cat "$dir/good.conf"; echo 'TNSPEC again'; } >"$dir/twice.conf"
+  sed 's/^TEGRA_CHIPID .*/TEGRA_CHIPID 0x23 extra/' "$dir/good.conf" >"$dir/fields.conf"
+  { cat "$dir/good.conf"; printf '\001\n'; } >"$dir/binary.conf"
+  head -c 5000 /dev/zero | tr '\0' a >"$dir/big.conf"
+  for f in nocompat twice fields binary big; do
+    run "$flocktool" put-board "$pkg" "$dir/$f.conf"
+    [ "$status" -ne 0 ] || { echo "accepted: $f"; return 1; }
+    [ ! -e "$pkg.ironflockos-orig" ]
+    cmp -s "$pkg/external/esp.img" "$dir/esp.orig"
+  done
+}
+
+@test "the kit puts flash.sh's conf on the ESP when it is there, and goes on without it" {
+  grep -q 'bash "$here/tegra-flash-flock.sh" check-board "$board_conf"' "$kit"
+  grep -q 'bash "$here/tegra-flash-flock.sh" put-board "$package" "$board_conf"' "$kit"
+  grep -q 'board_conf=$l4t/rootfs/etc/nv_boot_control.conf' "$kit"
+  grep -q 'warn "no nv_boot_control.conf from flash.sh' "$kit"
+  # the cleanup takes off whatever was put, with or without a .flock
+  grep -q 'if \[ -n "$package" \] && \[ -d "$package" \]; then' "$kit"
+}
