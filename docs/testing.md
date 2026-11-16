@@ -242,7 +242,13 @@ Sequence:
    before the root filesystem's system (the initramfs's are not read one by
    one: the check there is that Plymouth started in it), and the shutdown
    splash's frames (the journal says it started). Each new kind of frame is
-   saved as `screen-*.png` with the logs.
+   saved as `screen-*.png` with the logs. *The screen report:* on that boot
+   `/usr/lib/ironflockos/screen-report` (the hardware checklist's tool) exits
+   0; Plymouth's start is before the initramfs's end and keep-splash's
+   takeover after it; the framebuffer device has the screen's size and is
+   what the screen shows; `#204060` covers at least 90 % of it and, enrolled,
+   the rest is inside the picture's place; its `--screenshot` is the screen,
+   pixel for pixel. The report is saved as `screen-report.txt` with the logs.
 3. **Update into slot B** with the bundle of the same build, downloaded over
    HTTP from the host as the agent will: RAUC makes B primary, B boots, keeps
    machine-id, host key, `/data` and the app's file of slot A in `/apps`, and is
@@ -505,9 +511,11 @@ WP-4b.2, WP-5.4, WP-6.6):
 
 1. Flash the CI-built image (or the release image) with FlockFlasher onto the
    boot medium, with a `.flock` file once Phase 2 enrollment is in.
-2. First boot reaches a login prompt on the screen and on the serial console
-   where the board has one; `lsblk` shows `IRONFLOCKOS`, `rootfs-a`, `rootfs-b`,
-   `data`, the last grown to the medium.
+2. First boot reaches a login prompt on the serial console where the board
+   has one. On the screen, the EFI targets show the splash, with the login
+   prompt on the second virtual terminal (Ctrl+Alt+F2); with `boot=text`, and
+   on the other targets, the prompt is on the screen. `lsblk` shows
+   `IRONFLOCKOS`, `rootfs-a`, `rootfs-b`, `data`, the last grown to the medium.
 3. Wired network comes up with DHCP; WiFi with a NetworkManager profile where
    the board has WiFi.
 4. `docker run --rm hello-world` works.
