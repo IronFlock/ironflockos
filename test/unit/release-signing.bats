@@ -139,9 +139,9 @@ ci_jobs() {
   done
 }
 
-@test "ci-ok needs every job of ci.yml but the switched-off Jetson jobs" {
+@test "ci-ok needs every job of ci.yml, the Jetson jobs included" {
   wf=$repo/.github/workflows/ci.yml
-  jobs=$(awk '/^jobs:/ { f = 1; next } f && /^  [a-z][a-z0-9-]*:$/ { sub(/:$/, "", $1); print $1 }' "$wf" | grep -vxE 'ci-ok|jetson-rootfs|jetson-flash' | sort)
+  jobs=$(awk '/^jobs:/ { f = 1; next } f && /^  [a-z][a-z0-9-]*:$/ { sub(/:$/, "", $1); print $1 }' "$wf" | grep -vx 'ci-ok' | sort)
   needs=$(awk '$0 == "  ci-ok:" { f = 1; next } f && /^    needs:/ { n = 1; next } n && /^      - / { print $2; next } n { exit }' "$wf" | sort)
   [ -n "$jobs" ]
   [ "$jobs" = "$needs" ]
