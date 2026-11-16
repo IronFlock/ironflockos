@@ -61,7 +61,7 @@ The status of each work package is in [docs/implementation-plan.md](docs/impleme
 | `amd64-efi` | x86-64 PCs and industrial PCs with UEFI | shim, GRUB, RAUC | `base`, `base-rt`, `nvidia`, `installer` |
 | `arm64-efi` | arm64 machines with UEFI (SystemReady boards, VMs) | shim, GRUB, RAUC | `base`, `base-rt`, `installer` |
 | `rpi-arm64` | Raspberry Pi 4, 400, 5, CM4, CM5 | Pi firmware tryboot, RAUC | `base` |
-| `jetson-orin` | NVIDIA Jetson Orin | NVIDIA UEFI and `nvbootctrl`, RAUC | none yet: the root tree and layout are done, the A/B backend and images are not |
+| `jetson-orin` | NVIDIA Jetson Orin | NVIDIA UEFI and `nvbootctrl`, RAUC | none yet: the root tree, layout and A/B backend are done (not yet run on a module), the images are not |
 
 - **`base`**: Debian 13 with systemd, NetworkManager, OpenSSH, Docker CE, RAUC, fwupd,
   the device-agent and `ironflock` (`/usr/bin/ironflock`).

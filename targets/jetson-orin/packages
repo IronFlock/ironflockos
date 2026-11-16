@@ -24,7 +24,7 @@ nvidia-l4t-cuda
 nvidia-l4t-cuda-nvgpu
 nvidia-l4t-nvml
 
-# nvbootctrl (the RAUC backend, WP-6.3), tegrastats, power modes, fan
+# nvbootctrl (RAUC's backend tegra-rootfs-ab), tegrastats, power modes, fan
 nvidia-l4t-bootloader-utils
 nvidia-l4t-tools
 nvidia-l4t-nvpmodel

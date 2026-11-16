@@ -1,0 +1,8 @@
+[Unit]
+Description=IronFlockOS: keep the booted slot, or count its trial
+
+[Service]
+Type=oneshot
+# Not a failed unit when RAUC is busy with an update: the next boot is the
+# updated slot's anyway.
+ExecStart=-/usr/lib/ironflockos/tegra-slot-trial keep

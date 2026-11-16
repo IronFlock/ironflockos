@@ -22,12 +22,12 @@ vulnerabilities:
   # 0.62.0, which buildx 0.39.0 has; compose 5.7.1, the newest in Docker's
   # repository, is still on x/net 0.60. Trivy matches the module version only:
   # the binary does not link golang.org/x/net/html (govulncheck -mode=binary
-  # finds the module, no package; go tool nm, no html symbol in compose
-  # 5.7.0).
+  # finds the module, no package, in compose 5.7.0; go tool nm, no html symbol
+  # in compose 5.7.0 and 5.7.1).
   - id: CVE-2026-78661
     paths:
       - "usr/libexec/docker/cli-plugins/docker-compose"
-    statement: "golang.org/x/net < 0.62.0 in docker-compose 5.7.0, but the vulnerable package golang.org/x/net/html is not in the binary; no compose release with x/net 0.62.0 yet"
+    statement: "golang.org/x/net < 0.62.0 in docker-compose 5.7.1, but the vulnerable package golang.org/x/net/html is not in the binary; no compose release with x/net 0.62.0 yet"
     expired_at: 2026-12-06
   # NVIDIA Container Toolkit 1.20.1 (the nvidia variant; NVIDIA's latest,
   # 2026-09-19) is built with Go 1.27.1. No release built with Go >= 1.27.3

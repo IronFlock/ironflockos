@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
-# The jetson-orin target's root tree (WP-6.2; ADR-0008): its distribution,
-# NVIDIA's repositories and key, the pins, the RAUC slots, and what the
-# build refuses until the layout exists.
+# The jetson-orin target's root tree (WP-6.2, WP-6.3; ADR-0008): its
+# distribution, NVIDIA's repositories and key, the pins, the RAUC slots and
+# backend, and what the build refuses until the layout exists. The backend
+# itself: tegra-rootfs-ab.bats.
 
 repo="$BATS_TEST_DIRNAME/../.."
 t="$repo/targets/jetson-orin"
@@ -63,6 +64,23 @@ setup() {
   printf '%s\n' "$output" | grep -A1 '^\[slot.rootfs.0\]' | grep -qx 'device=/dev/disk/by-partlabel/APP'
   printf '%s\n' "$output" | grep -A1 '^\[slot.rootfs.1\]' | grep -qx 'device=/dev/disk/by-partlabel/APP_b'
   [ ! -d "$t/repart.d" ]
+}
+
+@test "RAUC: the backend system.conf names is in the target's overlay, with its health gate" {
+  backend=$(sed -n 's/^bootloader-custom-backend=//p' "$t/system.conf")
+  [ "$backend" = /usr/lib/ironflockos/tegra-rootfs-ab ]
+  [ -x "$t/overlay$backend" ]
+  [ -x "$t/overlay/usr/lib/ironflockos/tegra-slot-trial" ]
+  units=$t/overlay/usr/lib/systemd/system
+  grep -qx 'ExecStart=-/usr/lib/ironflockos/tegra-slot-trial keep' "$units/ironflockos-tegra-keep.service"
+  grep -qx 'WantedBy=timers.target' "$units/ironflockos-tegra-keep.timer"
+  grep -qx 'OnActiveSec=2min' "$units/ironflockos-tegra-keep.timer"
+  grep -qx 'enable ironflockos-tegra-keep.timer' "$t/overlay/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset"
+  grep -q 'enable ironflockos-tegra-keep.timer$' "$repo/build/customize.sh"
+  # No timer restarts a slot on trial: it gets one boot, as on the EFI targets.
+  [ "$(ls "$units")" = "$(printf 'ironflockos-tegra-keep.service\nironflockos-tegra-keep.timer')" ]
+  # NVIDIA's unit that would verify every boot stays masked.
+  grep -q 'mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service' "$repo/build/customize.sh"
 }
 
 @test "the build makes jetson-orin in the base variant with the standard kernel only" {

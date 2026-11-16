@@ -9,8 +9,9 @@ reference for *why*.
 Status as of 2026-11-16. The latest release is `v0.17.0` (2026-11-12), on the `test` and
 the `production` channel. Phase 0 is complete. The code of every work package up to Phase 5
 is written except WP-2.9 (platform firmware inventory). Jetson has its BSP, root tree and
-layout (WP-6.1, WP-6.2), but not yet its A/B backend, images or capsule lane (WP-6.3 to
-WP-6.5); its CI jobs are switched off until that work continues (#201). What remains
+layout (WP-6.1, WP-6.2) and its A/B backend with the health gate (WP-6.3, not yet run
+on a module), but not yet its images or capsule lane (WP-6.4, WP-6.5); its CI jobs,
+switched off by #201, are back with WP-6.3. What remains
 elsewhere is acceptance on real devices, starting with the x86 IPC (WP-1.9) that `v1.0.0`
 (WP-2.10, milestone M3) needs.
 
@@ -102,7 +103,7 @@ decision), in progress.
 | 5.5 | Follow-up: Raspberry Pi RT kernel built in CI | ironflockos | 8 | 5.4, 4b.1 | open |
 | 6.1 | BSP decision, download and cache | ironflockos | 2 | | done (#164, ADR-0008 accepted; licence review 2026-11-07, [jetson-licence-review.md](jetson-licence-review.md)) |
 | 6.2 | `jetson-orin` rootfs and layout | ironflockos | 6 | 6.1, 2.3 | done (#171, #173, #174, #177) |
-| 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | open (`system.conf` names the backend; the backend itself is to do; the Jetson CI jobs are off since #201 and come back with this package) |
+| 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | built (`tegra-rootfs-ab`, `tegra-slot-trial`, unit tests against `nvbootctrl`'s format; the Jetson CI jobs are back in `ci-ok`, behind `JETSON_CI`); open: the A/B switch and the forced fallback on a module (WP-6.6) |
 | 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | open (licence review: a flash kit for users; the package and the SD image published only after WP-6.8 allows it) |
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | open (licence review: NVIDIA's own capsules from `nvidia-l4t-bootloader`) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
@@ -119,9 +120,9 @@ decision), in progress.
 | 8.3 | Messages on the splash | ironflockos | 1.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.5 | The kiosk app | its own repository | own plan | the contract in kiosk-plan.md | open, built outside this repository |
-| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | open: needs the machine |
+| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | prepared (`screen-report` and the checklist); open: the report from the machine on the next release, and the keys, touch and a recording with a person at the machine |
 | 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's background colour (#212); open: the proof on the machine (8.6) |
-| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | parked (Marko, 2026-11-16) until a panel can be looked at |
 
 Totals in days as planned: Phase 0 remaining 4.5; Phase 1 20; Phase 2 31.5 across four
 repositories; Phase 3 9; Phase 4 6; Phase 4b 6; Phase 5 15 (+8 follow-up); Phase 6 25
@@ -655,6 +656,20 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   decrements on warm reboot), `system.conf` for the target, bundle build.
 - Acceptance: bats tests of the backend against recorded `nvbootctrl` output; on a
   module, an A/B switch and a forced fallback both work.
+- As built: `tegra-rootfs-ab` reads `nvbootctrl -t rootfs dump-slots-info`, switches
+  with `set-active-boot-slot`, verifies with `nvbootctrl verify`, and writes
+  `RootfsStatusSlotA/B` itself (r39.2.1's `nvbootctrl` has no command for it).
+  "Recorded" output could not be recorded without a module: the fixtures are
+  written from the tool's format strings and NVIDIA's firmware source
+  (`docs/targets/jetson-orin.md`, "What nvbootctrl r39.2.1 does"). The health gate is
+  `tegra-slot-trial`: a slot not on trial is verified two minutes after each boot
+  (NVIDIA's firmware ends in its recovery kernel when both slots are given up), and an
+  updated slot gets one boot, as on the EFI targets: no time limit for the agent, and
+  on the second boot without its mark the slot is marked bad and the device restarts
+  into the old slot. That rule replaces the scope's "watchdog-driven warm reboot on
+  failed enroll" (decided by Marko on 2026-11-16); the hardware watchdog still resets a
+  system that hangs, and a slot that does not boot falls back through the firmware's
+  three warm boots. The switch and the fallback on a module are WP-6.6's.
 
 ### WP-6.4 Orin Nano SD image and NX/AGX flash package (5 days)
 

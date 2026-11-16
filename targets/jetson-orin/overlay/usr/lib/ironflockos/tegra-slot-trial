@@ -1,0 +1,112 @@
+#!/bin/sh
+# The health gate on Jetson (WP-6.3; docs/targets/jetson-orin.md, "A/B with
+# nvbootctrl"), run by ironflockos-tegra-keep.timer two minutes after
+# multi-user.target:
+#
+#   tegra-slot-trial keep
+#
+# NVIDIA's firmware counts every warm boot of a root slot that nobody
+# verified, and after three it gives the slot up: to the other slot, or to
+# NVIDIA's recovery kernel when the other is given up too. This script makes
+# the Jetson follow the EFI targets' rule instead: an updated slot gets one
+# boot, with no time limit for the device-agent to mark it good; whatever
+# restarts the device before the mark, warm or cold, the slot the update came
+# from boots next.
+#
+# - On a slot that is not on trial (a fresh flash, a slot the agent has marked
+#   good, the slot an update came from): marks it good through RAUC, which has
+#   nvbootctrl verify the boot. Restarts without a connection, or a site
+#   without network, never use the slot up.
+# - On the slot on trial (made primary by an update and not yet marked good
+#   by the agent): counts the boot. On the second counted boot it gives the
+#   slot up: it marks it bad through RAUC, which hands the next boot to the
+#   slot the update came from, and reboots once. If RAUC refuses (that slot is
+#   not known to boot), the trial ends and the slot stays. The one difference
+#   from GRUB, which skips a tried slot before its kernel: the tried slot boots
+#   once more for two minutes before the device returns to the old one.
+# - After the firmware fell back from a trial (the slot did not boot: three
+#   warm boots through panic=10 or the watchdog): ends the trial; the slot
+#   tried reads as bad.
+#
+# The trial lives in the backend's state on /data
+# (/usr/lib/ironflockos/tegra-rootfs-ab). Without /data there is no trial,
+# and the slot is kept.
+#
+# IRONFLOCKOS_TEGRA_AB_STATE, IRONFLOCKOS_PROC_CMDLINE, IRONFLOCKOS_RAUC,
+# IRONFLOCKOS_TEGRA_BACKEND, IRONFLOCKOS_REBOOT: for the unit tests.
+set -eu
+state_file=${IRONFLOCKOS_TEGRA_AB_STATE:-/data/rauc/ironflockos-tegra-rootfs-ab.state}
+cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+rauc=${IRONFLOCKOS_RAUC:-rauc}
+backend=${IRONFLOCKOS_TEGRA_BACKEND:-/usr/lib/ironflockos/tegra-rootfs-ab}
+reboot=${IRONFLOCKOS_REBOOT:-systemctl reboot}
+# Boots of the slot on trial before it is given up: one, as on the EFI
+# targets.
+max_boots=1
+
+say() { echo "tegra-slot-trial: $*"; }
+
+state_get() {
+  [ -r "$state_file" ] || return 0
+  sed -n "s/^$1=//p" "$state_file" | tail -n 1
+}
+# state_set KEY [VALUE]: without VALUE the key goes.
+state_set() {
+  tmp="$state_file.new"
+  { [ -r "$state_file" ] && grep -v "^$1=" "$state_file" || true; } >"$tmp"
+  [ "$#" -lt 2 ] || echo "$1=$2" >>"$tmp"
+  mv "$tmp" "$state_file"
+}
+end_trial() {
+  state_set trial
+  state_set trial-boots
+}
+
+if [ "$#" -ne 1 ] || [ "$1" != keep ]; then
+  echo "usage: tegra-slot-trial keep" >&2
+  exit 2
+fi
+booted=$(tr ' ' '\n' <"$cmdline" | sed -n 's/^rauc\.slot=//p' | tail -n 1)
+case "$booted" in
+  A | B) ;;
+  *)
+    say "no rauc.slot= on the kernel command line: nothing to do"
+    exit 0
+    ;;
+esac
+trial=$(state_get trial)
+boots=$(state_get trial-boots)
+case "$boots" in
+  '' | *[!0-9]*) boots=0 ;;
+esac
+
+if [ -n "$trial" ] && [ "$trial" = "$booted" ]; then
+  boots=$((boots + 1))
+  state_set trial-boots "$boots"
+  if [ "$boots" -le "$max_boots" ]; then
+    say "slot $booted is on trial: the device-agent marks it good once it has reached the platform; a restart before that returns to the other slot"
+    exit 0
+  fi
+  say "slot $booted restarted before the device-agent marked it good: giving it up"
+  if "$rauc" status mark-bad booted; then
+    end_trial
+    say "the next boot is the slot the update came from: rebooting"
+    $reboot
+    exit 0
+  fi
+  end_trial
+  say "RAUC did not hand the next boot to the other slot: slot $booted stays"
+  exit 0
+fi
+if [ -n "$trial" ]; then
+  # Another slot is on trial: the update is not booted yet (it is the
+  # primary), or the firmware fell back from it.
+  primary=$("$backend" get-primary) || primary=""
+  if [ -n "$primary" ] && [ "$primary" != "$trial" ]; then
+    say "the firmware fell back from slot $trial to slot $booted: the update did not stay"
+    end_trial
+    state_set "$trial" bad
+  fi
+fi
+# Not on trial: the boot counts no more.
+"$rauc" status mark-good booted

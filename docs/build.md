@@ -181,6 +181,20 @@ within those two minutes still falls back. A device that never
 reaches the platform keeps booting its good slot: when every slot has been
 tried, GRUB starts over with the first good one.
 
+The Raspberry Pi and Jetson have no GRUB; RAUC switches their slots through a
+`custom` backend, and the device-agent's mark is the health gate there too.
+On the Pi, `rpi-tryboot` arms the firmware's tryboot, which tries an updated
+slot once; marking it good makes it the primary
+([rpi-arm64.md](targets/rpi-arm64.md)). On Jetson, `tegra-rootfs-ab` sets the
+next slot with `nvbootctrl -t rootfs` and NVIDIA's `RootfsStatusSlotA/B`
+variables, and marking the running slot good is `nvbootctrl verify`. NVIDIA's
+firmware falls back after three warm boots nobody verified, and ends in its
+recovery kernel when both slots are given up. So `tegra-slot-trial` keeps every
+slot that is not on trial two minutes after each boot, and gives an updated
+slot one boot, as GRUB does: when it starts a second time without the agent's
+mark, it is marked bad two minutes in and the device restarts into the old slot
+([jetson-orin.md](targets/jetson-orin.md#ab-with-nvbootctrl)).
+
 `IRONFLOCKOS_CMDLINE` in `grubenv` appends kernel parameters on both slots, for
 diagnosis in the field (`grub-editenv /boot/efi/EFI/BOOT/grubenv set
 IRONFLOCKOS_CMDLINE=...`) and for the QEMU tests. `IRONFLOCKOS_BOOT=text`
@@ -871,6 +885,26 @@ IRONFLOCKOS partition, which an update does not write. A device installed
 with 0.16.0 or earlier keeps booting on text after an update to a release
 with the splash; it gets `ironflockos-splash`, which writes an archive its
 `grub.cfg` never loads.
+
+**The screen report.** `/usr/lib/ironflockos/screen-report [--app NAME]
+[--screenshot FILE]`, run by hand as root, prints what this boot did on
+the screen, for the hardware checklist (`docs/testing.md`, item 13): the
+image, slot, kernel, board and firmware; the boot's times after the
+kernel started (systemd's start in the root filesystem, Plymouth's start
+from keep-splash's journal line, keep-splash's takeover, the enrollment,
+Docker, the device-agent, the first container and, with `--app`, the
+container whose name contains NAME, from its process's start), and after
+the reset where the firmware has ACPI's FPDT (GRUB gives systemd no
+times); the graphics driver, connectors, modes and framebuffer device
+(debugfs, sysfs, `FBIOGET_VSCREENINFO`); the share of the framebuffer
+device's pixels in the splash's colour and where the rest is, against the
+picture's place; whether the framebuffer device is what the screen shows
+(no plane in debugfs shows a framebuffer that a program made); the input
+devices with udev's `ID_INPUT*`; the keys' setup; and the splash's
+services and last refusal. It changes nothing; `--screenshot` writes the
+framebuffer device's picture to FILE as a PPM. What a device cannot say,
+such as the firmware's times without FPDT, it reports as not available.
+No unit runs it.
 
 ## The nvidia variant
 

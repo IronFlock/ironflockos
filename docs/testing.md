@@ -44,8 +44,11 @@ The network profiles (`network-profiles.bats`) run against folders that stand
 for the IRONFLOCKOS partition and `/data/network/connections`, with every rule a
 profile has to meet. The trusted CAs (`ca.bats`) run against folders that
 stand for the IRONFLOCKOS partition, `/data` and the trust store, with a fake
-`update-ca-certificates` and certificates that `openssl` makes. They need bash,
-bats and openssl only:
+`update-ca-certificates` and certificates that `openssl` makes. The RAUC
+backends of the Raspberry Pi (`rpi-tryboot.bats`) and of Jetson
+(`tegra-rootfs-ab.bats`, with its health gate) run against fakes of the
+firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
+checks"). They need bash, bats and openssl only:
 
 ```sh
 just test
@@ -242,7 +245,13 @@ Sequence:
    before the root filesystem's system (the initramfs's are not read one by
    one: the check there is that Plymouth started in it), and the shutdown
    splash's frames (the journal says it started). Each new kind of frame is
-   saved as `screen-*.png` with the logs.
+   saved as `screen-*.png` with the logs. *The screen report:* on that boot
+   `/usr/lib/ironflockos/screen-report` (the hardware checklist's tool) exits
+   0; Plymouth's start is before the initramfs's end and keep-splash's
+   takeover after it; the framebuffer device has the screen's size and is
+   what the screen shows; `#204060` covers at least 90 % of it and, enrolled,
+   the rest is inside the picture's place; its `--screenshot` is the screen,
+   pixel for pixel. The report is saved as `screen-report.txt` with the logs.
 3. **Update into slot B** with the bundle of the same build, downloaded over
    HTTP from the host as the agent will: RAUC makes B primary, B boots, keeps
    machine-id, host key, `/data` and the app's file of slot A in `/apps`, and is
@@ -487,15 +496,28 @@ its disk (WP-6.2). CI builds slot A's filesystem image and the bundle with
 `just build jetson-orin base` on the arm64 runner and runs
 `sudo test/image/jetson-rootfs-check.sh <tree>`. The script checks the L4T
 packages at the pinned versions, the Ubuntu, Docker and NVIDIA sources with
-the pins, kernel, initrd and `nvgpu`, the RAUC slots, units and masks, the
-baked agent and Docker's `nvidia` runtime. It also runs the tree's binaries in
-a chroot (`docs/targets/jetson-orin.md`). It needs root and an arm64 host.
-The `jetson-flash` job then makes the flash package from the image with
-NVIDIA's tools on an x86_64 runner (`build/tegra-flash-package.sh`): the dry
-run that the layout and the slot images pass the BSP's checks.
+the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
+`nvbootctrl` and the health gate's timer, units and masks (NVIDIA's
+`nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
+agent and Docker's `nvidia` runtime. It also runs the tree's binaries in a
+chroot, the backend among them (`docs/targets/jetson-orin.md`). It needs root
+and an arm64 host. The `jetson-flash` job then makes the flash package from
+the image with NVIDIA's tools on an x86_64 runner
+(`build/tegra-flash-package.sh`): the dry run that the layout and the slot
+images pass the BSP's checks.
 
-Both jobs are switched off for now to save CI time, until the Jetson work
-continues. `ci.yml` says how to switch them on.
+The backend's logic is covered by `test/unit/tegra-rootfs-ab.bats`: every
+command against a fake `nvbootctrl` that prints r39.2.1's format (fixtures in
+`test/unit/fixtures/nvbootctrl`, written from the tool's format strings, as
+nobody has recorded them on a module yet) and fake efivarfs files, and the
+update cases (marked good, never marked good and restarted, a cold restart
+during the trial, does not boot, no slot known good, no `/data`) against a
+model of NVIDIA's firmware that counts boots as its source does. The A/B switch and the forced fallback on a module
+are the hardware checklist (WP-6.6).
+
+Both jobs run on every pull request when the repository variable `JETSON_CI`
+is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs
+them: without the variable no pull request gets `ci-ok`.
 
 ## Hardware checklist
 
@@ -505,9 +527,11 @@ WP-4b.2, WP-5.4, WP-6.6):
 
 1. Flash the CI-built image (or the release image) with FlockFlasher onto the
    boot medium, with a `.flock` file once Phase 2 enrollment is in.
-2. First boot reaches a login prompt on the screen and on the serial console
-   where the board has one; `lsblk` shows `IRONFLOCKOS`, `rootfs-a`, `rootfs-b`,
-   `data`, the last grown to the medium.
+2. First boot reaches a login prompt on the serial console where the board
+   has one. On the screen, the EFI targets show the splash, with the login
+   prompt on the second virtual terminal (Ctrl+Alt+F2); with `boot=text`, and
+   on the other targets, the prompt is on the screen. `lsblk` shows
+   `IRONFLOCKOS`, `rootfs-a`, `rootfs-b`, `data`, the last grown to the medium.
 3. Wired network comes up with DHCP; WiFi with a NetworkManager profile where
    the board has WiFi.
 4. `docker run --rm hello-world` works.
@@ -548,4 +572,67 @@ WP-4b.2, WP-5.4, WP-6.6):
     enrolls, the agent reaches the appliance, an app's image pulls from its
     registry, and an OS update downloads from its mirror. After the update the
     device still reaches the appliance.
-13. Target-specific items in `docs/targets/<target>.md`.
+13. The screen (`docs/build.md`, "The screen"), on a board with a screen, a
+    USB keyboard plugged in, and the kiosk app or another screen app
+    installed where there is one. Two people: one at the machine with a
+    phone that records video, one at a root shell on the device (the
+    agent's terminal in Studio, or SSH). The shell runs
+    `/usr/lib/ironflockos/screen-report`, which reads this boot and changes
+    nothing; with the screen app, `--app NAME` adds when its container
+    started (NAME: a part of its container's name). Without a person at the
+    machine only the reports are done. In this order, about 20 minutes:
+    1. Cold start. Shut down, cut the power for ten seconds, start
+       recording with the screen and the power switch in the picture, and
+       switch on. Record until the screen app's UI shows, or 30 seconds
+       past the splash without one. The recording must show the
+       firmware's picture, then the splash's colour (black by default),
+       then the splash (IronFlock's logo or the device's picture, faded
+       in), then the UI: no text line and no picture that goes and comes
+       back. Note any black between the colour and the picture, and how
+       long it lasts (Intel's driver should keep the colour). Then the
+       shell runs the report (`--app NAME` with a screen app). Its power-on
+       times need this cold start.
+    2. Esc in GRUB. Restart (`systemctl reboot`). When the firmware's
+       picture gives way to the splash's colour, press Esc once (GRUB waits
+       two seconds): its menu shows the slot, its fallback once the other
+       slot is good, "Start with messages" and "Firmware setup". If the
+       firmware's own menu opens instead, note it and leave it. Choose
+       "Start with messages": this boot shows its messages and ends at a
+       login prompt on tty1.
+    3. Esc during the boot. Restart. A few seconds after the picture
+       shows, press Esc: the boot messages; Esc again: the splash. In the
+       initramfs, the first seconds, Esc shows nothing (Known limits of
+       `docs/kiosk-plan.md`).
+    4. The terminals. After the boot, Ctrl+Alt+F2: a login prompt; with a
+       console password set, log in with it and log out. Ctrl+Alt+F1: back
+       to the UI, or without a screen app to what tty2 left there.
+    5. The firmware's setup. Restart and press the PC's own setup key (its
+       manual names it, often Del or F2) during the firmware's picture: the
+       setup opens. Leave it without saving. Restart, Esc in GRUB, choose
+       "Firmware setup": the setup opens again. Note the key, and whether
+       the menu entry was there.
+    6. Touch. With the UI on the screen, tap a control near each corner and
+       one in the middle, and swipe a list: each reacts where the finger
+       is, not offset or mirrored. The report's "Input" lists the touch
+       screen and the keyboard with `ID_INPUT_TOUCHSCREEN` and
+       `ID_INPUT_KEYBOARD`.
+    7. A new splash picture. The screen app hands one over (or the shell
+       writes a PNG under another name in `/data/ironflockos/screen`,
+       syncs it and renames it to `splash.png`, with a `splash.conf` that
+       sets another `background=`). `journalctl -u ironflockos-splash` says
+       "the splash from the next boot on". Restart and record: GRUB's new
+       colour, then the new picture centred on it, no IronFlock logo in
+       between. Then the report.
+    8. An OS update (item 6 above). Record the restart into the new slot:
+       as in step 1, the device's own picture. Then the report: the other
+       slot, the same splash.
+    9. Shutdown. With the UI on the screen, `systemctl poweroff`. Record
+       until the screen is dark, and note what it showed meanwhile: the
+       app's last frame, black, or the splash.
+
+    Send back the recordings, or the times read from them (power-on to the
+    firmware's picture, to the colour, to the picture, to the UI); each
+    report as text; and per step a line: as described, or what differed.
+    `--screenshot FILE` adds the framebuffer device's picture as a PPM
+    (`gzip` it, 6 MB at 1920x1080); a photo of the screen does as well.
+14. Target-specific items in `docs/targets/<target>.md`.

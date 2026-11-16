@@ -252,6 +252,13 @@ The app guarantees:
   but for a crop that moved it by 10 pixels. The capture (`ironflockos-splash capture`
   at the end of a boot with the splash, an 8-bit RGB PNG of the framebuffer, and
   `IRONFLOCKOS_SPLASH_MODE` in `splash.env`) is in the history of that branch.
+- The cause of that shift, read from the two runs' frames on 2026-11-16: the capture cut
+  the 10-pixel border off, and `gfxterm` draws its background from the screen's corner,
+  over the border (GRUB 2.12, `gfxterm.c`). The picture GRUB gets has to be the whole
+  screen, uncropped. On arm64 in QEMU GRUB drew the picture and virtio-gpu then showed
+  no framebuffer until Plymouth drew, so there GRUB keeps the colour only.
+- Parked by Marko on 2026-11-16 until the picture can be looked at on a real panel:
+  nobody is at the first machine, and a shell cannot see GRUB's two seconds.
 - Risk: the panel's mode in GRUB and in the kernel's driver may differ (a mode set
   between them shows black or a step), and whether the picture survives the driver
   taking the screen.
@@ -276,6 +283,14 @@ The app guarantees:
   the picture on Intel graphics, the keys with a keyboard plugged in, the firmware's
   setup key, a changed splash picture, the screen across an OS update.
 - Acceptance: the figures and results in `docs/targets/amd64-efi.md`.
+- Prepared on 2026-11-16: `/usr/lib/ironflockos/screen-report` prints what a shell on
+  the device can say about a boot's screen (the times, the graphics mode, what the
+  framebuffer shows, the input devices, the keys' settings), and the hardware checklist
+  of `docs/testing.md` has the steps for a person at the machine ("The screen").
+- The first machine runs `v0.17.0` and is reached through a shell only. It gets the
+  next release by an update, and the report is run there. The keys, touch and what the
+  eye sees from the firmware's picture to the UI stay open until a person is at the
+  machine.
 
 ## Status board
 
@@ -287,8 +302,8 @@ The app guarantees:
 | 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.5 | The kiosk app | its own | own plan | the contract | open |
 | 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's colour only (#212); open: the proof on the machine (WP-8.6) |
-| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | open |
-| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open |
+| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | prepared (the report script and the checklist); open: the report from the machine on the next release, and the keys, touch and a recording with a person at the machine |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | parked (Marko, 2026-11-16) until a panel can be looked at; the cause of the failed CI rounds is known |
 
 WP-8.5 needs only the contract, so it starts at once and is tested against the image as
 WP-8.1 and WP-8.4 arrive.
@@ -312,8 +327,10 @@ colour only: GRUB's picture is WP-8.8, after the release, proven on the panel.
 - `grub.cfg` is on the IRONFLOCKOS partition, which an update does not write. The kernel
   parameters of the splash, the hidden menu, the firmware entry and the device's own
   picture therefore come with a new installation. A device installed earlier keeps the
-  text boot after an update. No device is in the field yet (`docs/build.md`); changing
-  `grub.cfg` on installed devices would be a work package of its own.
+  text boot after an update. Changing `grub.cfg` on installed devices would be a work
+  package of its own; until then a change to it reaches a device through an installer
+  stick only, as `ironflock os install` does not replace a system that is IronFlockOS
+  already.
 - The first picture a person sees is the firmware's, for as long as the firmware takes
   (nine seconds on the first machine). IronFlockOS cannot change it; the PC's maker sets
   it, to the same logo or to black.
