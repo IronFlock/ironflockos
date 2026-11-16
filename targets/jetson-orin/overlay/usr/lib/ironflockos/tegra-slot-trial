@@ -1,0 +1,131 @@
+#!/bin/sh
+# The health gate's clock on Jetson (WP-6.3; docs/targets/jetson-orin.md, "A/B
+# with nvbootctrl"). NVIDIA's firmware counts every boot of a root slot that
+# nobody verified, and after three it gives the slot up: to the other slot, or
+# to NVIDIA's recovery kernel when the other is given up too. It only counts
+# boots, and only warm ones. This script makes the count mean "the
+# device-agent has not marked the updated slot good":
+#
+#   tegra-slot-trial keep       (ironflockos-tegra-keep.timer, 2 minutes up)
+#   tegra-slot-trial deadline   (ironflockos-tegra-trial.timer, 15 minutes up)
+#
+# - keep, on a slot that is not on trial (a fresh flash, a slot the agent has
+#   marked good, the slot an update came from): marks it good through RAUC,
+#   which has nvbootctrl verify the boot. Restarts without a connection, or a
+#   site without network, never use the slot up.
+# - keep, on the slot on trial (made primary by an update and not yet marked
+#   good by the agent): counts the boot. From the fourth such boot that
+#   reached two minutes (the firmware did not fall back after three, for
+#   example because the reboots were cold), it marks the slot bad through
+#   RAUC, which hands the next boot to the slot the update came from, and
+#   reboots once. If RAUC refuses (that slot is not known to boot), the trial
+#   ends and the slot stays.
+# - deadline, on the slot on trial: reboots warm, so the firmware counts the
+#   boot. At most three times; then keep ends the trial.
+# - keep, after the firmware fell back from a trial: ends the trial; the slot
+#   tried reads as bad.
+#
+# The trial lives in the backend's state on /data
+# (/usr/lib/ironflockos/tegra-rootfs-ab). Without /data there is no trial,
+# and the slot is kept.
+#
+# IRONFLOCKOS_TEGRA_AB_STATE, IRONFLOCKOS_PROC_CMDLINE, IRONFLOCKOS_BOOT_ID,
+# IRONFLOCKOS_RAUC, IRONFLOCKOS_TEGRA_BACKEND, IRONFLOCKOS_REBOOT: for the
+# unit tests.
+set -eu
+state_file=${IRONFLOCKOS_TEGRA_AB_STATE:-/data/rauc/ironflockos-tegra-rootfs-ab.state}
+cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+boot_id_file=${IRONFLOCKOS_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+rauc=${IRONFLOCKOS_RAUC:-rauc}
+backend=${IRONFLOCKOS_TEGRA_BACKEND:-/usr/lib/ironflockos/tegra-rootfs-ab}
+reboot=${IRONFLOCKOS_REBOOT:-systemctl reboot}
+# Trial boots: as many as NVIDIA's RootfsRetryCountMax (3).
+max_boots=3
+
+say() { echo "tegra-slot-trial: $*"; }
+
+state_get() {
+  [ -r "$state_file" ] || return 0
+  sed -n "s/^$1=//p" "$state_file" | tail -n 1
+}
+# state_set KEY [VALUE]: without VALUE the key goes.
+state_set() {
+  tmp="$state_file.new"
+  { [ -r "$state_file" ] && grep -v "^$1=" "$state_file" || true; } >"$tmp"
+  [ "$#" -lt 2 ] || echo "$1=$2" >>"$tmp"
+  mv "$tmp" "$state_file"
+}
+end_trial() {
+  state_set trial
+  state_set trial-boots
+  state_set trial-boot-id
+}
+
+[ "$#" -eq 1 ] || {
+  echo "usage: tegra-slot-trial keep|deadline" >&2
+  exit 2
+}
+booted=$(tr ' ' '\n' <"$cmdline" | sed -n 's/^rauc\.slot=//p' | tail -n 1)
+case "$booted" in
+  A | B) ;;
+  *)
+    say "no rauc.slot= on the kernel command line: nothing to do"
+    exit 0
+    ;;
+esac
+boot_id=$(cat "$boot_id_file")
+trial=$(state_get trial)
+boots=$(state_get trial-boots)
+case "$boots" in
+  '' | *[!0-9]*) boots=0 ;;
+esac
+
+case "$1" in
+  keep)
+    if [ -n "$trial" ] && [ "$trial" = "$booted" ]; then
+      boots=$((boots + 1))
+      state_set trial-boots "$boots"
+      # deadline reboots only a boot that has been counted.
+      state_set trial-boot-id "$boot_id"
+      if [ "$boots" -le "$max_boots" ]; then
+        say "slot $booted is on trial (boot $boots of $max_boots): the device-agent marks it good once it has reached the platform"
+        exit 0
+      fi
+      say "slot $booted is still on trial after $max_boots boots: giving it up"
+      if "$rauc" status mark-bad booted; then
+        end_trial
+        say "the next boot is the slot the update came from: rebooting"
+        $reboot
+        exit 0
+      fi
+      end_trial
+      say "RAUC did not hand the next boot to the other slot: slot $booted stays"
+      exit 0
+    fi
+    if [ -n "$trial" ]; then
+      # Another slot is on trial: the update is not booted yet (it is the
+      # primary), or the firmware fell back from it.
+      primary=$("$backend" get-primary) || primary=""
+      if [ -n "$primary" ] && [ "$primary" != "$trial" ]; then
+        say "the firmware fell back from slot $trial to slot $booted: the update did not stay"
+        end_trial
+        state_set "$trial" bad
+      fi
+    fi
+    # Not on trial: the boot counts no more.
+    "$rauc" status mark-good booted
+    ;;
+  deadline)
+    # Only a boot that keep has counted: the reboots stay bounded even when
+    # the count cannot be written.
+    if [ -n "$trial" ] && [ "$trial" = "$booted" ] && [ "$boots" -le "$max_boots" ] &&
+      [ "$(state_get trial-boot-id)" = "$boot_id" ]; then
+      say "slot $booted was not marked good within 15 minutes (boot $boots of $max_boots): rebooting, so the firmware counts it"
+      $reboot
+    fi
+    ;;
+  *)
+    echo "usage: tegra-slot-trial keep|deadline" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,13 @@
+# A slot on trial that the device-agent has not marked good 15 minutes after
+# multi-user.target is rebooted warm, so NVIDIA's firmware counts the boot and
+# falls back after three (/usr/lib/ironflockos/tegra-slot-trial,
+# docs/targets/jetson-orin.md). Nothing happens on a slot that is not on trial.
+[Unit]
+Description=IronFlockOS: reboot a slot on trial that was not marked good
+After=multi-user.target
+
+[Timer]
+OnActiveSec=15min
+
+[Install]
+WantedBy=timers.target

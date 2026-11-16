@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+# RAUC custom bootloader backend for NVIDIA's rootfs A/B on Jetson Orin
+# (system.conf [handlers] bootloader-custom-backend; master plan, sections
+# 3.2 and 3.7; WP-6.3).
+#
+#   tegra-rootfs-ab get-primary
+#   tegra-rootfs-ab set-primary A|B
+#   tegra-rootfs-ab get-state A|B
+#   tegra-rootfs-ab set-state A|B good|bad
+#   tegra-rootfs-ab get-current
+#
+# Slot A is APP, slot B is APP_b; NVIDIA numbers them 0 and 1. With rootfs
+# A/B (RootfsRedundancyLevel 1) NVIDIA's UEFI firmware boots the root slot of
+# the boot chain it runs, and L4TLauncher counts the boots of that slot in a
+# scratch register of the PMC (L4TRootfsValidation.c of NVIDIA's
+# edk2-nvidia): each boot takes one try off the slot's retry count (3 after
+# a cold boot or a verified boot); a slot whose count is 0 is marked
+# unbootable (EFI variable RootfsStatusSlotA/B = 0xFF) and the firmware
+# switches to the other slot, or to NVIDIA's recovery kernel when that one is
+# unbootable too.
+#
+# - get-primary is nvbootctrl's active rootfs slot: the one the next boot
+#   starts. get-current is the slot that runs.
+# - set-primary of the other slot makes it bootable (RootfsStatusSlot<X> =
+#   0) and has nvbootctrl make it the active slot; the slot is then on trial
+#   (tegra-slot-trial, docs/targets/jetson-orin.md). It fails, and RAUC's
+#   install with it, unless nvbootctrl then reports that slot as the active
+#   one.
+# - set-state good of the running slot runs `nvbootctrl verify`, which ends
+#   the count: the slot stays. Only a slot that runs is vouched for.
+# - set-state bad of a slot that does not run marks it unbootable for the
+#   firmware (as NVIDIA's own update engine does before it writes a slot) and
+#   hands the next boot back to the running slot. Of the running slot it
+#   hands the next boot to the other slot, but only when that one is known
+#   to boot, and leaves the running slot bootable for the firmware: NVIDIA's
+#   fallback from two unbootable slots is the recovery kernel, from which the
+#   device does not come online.
+#
+# Slot states live on /data, beside RAUC's own (good, bad, trying, and the
+# slot on trial). The running slot is always good.
+#
+# IRONFLOCKOS_NVBOOTCTRL, IRONFLOCKOS_EFIVARS, IRONFLOCKOS_CHATTR,
+# IRONFLOCKOS_TEGRA_AB_STATE and IRONFLOCKOS_PROC_CMDLINE: for the unit tests.
+set -euo pipefail
+nvbootctrl=${IRONFLOCKOS_NVBOOTCTRL:-/usr/sbin/nvbootctrl}
+efivars=${IRONFLOCKOS_EFIVARS:-/sys/firmware/efi/efivars}
+chattr=${IRONFLOCKOS_CHATTR:-chattr}
+state_file=${IRONFLOCKOS_TEGRA_AB_STATE:-/data/rauc/ironflockos-tegra-rootfs-ab.state}
+cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+# NVIDIA's public variable GUID (gNVIDIAPublicVariableGuid).
+nvidia_guid=781e084c-a330-417c-b678-38e696380cb9
+
+die() {
+  echo "tegra-rootfs-ab: $*" >&2
+  exit 1
+}
+
+index_of() {
+  case "$1" in
+    A) echo 0 ;;
+    B) echo 1 ;;
+    *) die "unknown slot '$1' (A or B)" ;;
+  esac
+}
+other_of() {
+  case "$1" in
+    A) echo B ;;
+    B) echo A ;;
+    *) die "unknown slot '$1' (A or B)" ;;
+  esac
+}
+
+# --- nvbootctrl -t rootfs dump-slots-info ----------------------------------
+# What r39.2.1's nvbootctrl prints (docs/targets/jetson-orin.md):
+#   Current rootfs slot: A
+#   Active rootfs slot: A
+#   num_slots: 2
+#   slot: 0,             retry_count: 3,             status: normal
+#   slot: 1,             retry_count: 3,             status: normal
+# load reads it into cur (the slot that runs), act (the slot the next boot
+# starts) and status_A, status_B (normal or unbootable). Anything else is an
+# error, never a guess.
+cur="" act="" status_A="" status_B=""
+load() {
+  local out rc=0
+  [ -x "$nvbootctrl" ] || die "$nvbootctrl is missing (package nvidia-l4t-bootloader-utils)"
+  out=$("$nvbootctrl" -t rootfs dump-slots-info 2>&1) || rc=$?
+  case "$out" in
+    *"RootFS A/B is not enabled"*) die "NVIDIA's rootfs A/B is not enabled on this module (flashed without ROOTFS_AB=1?)" ;;
+  esac
+  [ "$rc" -eq 0 ] || die "nvbootctrl -t rootfs dump-slots-info failed: $(oneline "$out")"
+  cur=$(field "$out" 'Current rootfs slot')
+  act=$(field "$out" 'Active rootfs slot')
+  status_A=$(status_field "$out" 0)
+  status_B=$(status_field "$out" 1)
+  if [ -z "$cur" ] || [ -z "$act" ] || [ -z "$status_A" ] || [ -z "$status_B" ] ||
+    [ "$(printf '%s\n' "$out" | sed -n 's/^num_slots: //p')" != 2 ]; then
+    die "unexpected output of nvbootctrl -t rootfs dump-slots-info: $(oneline "$out")"
+  fi
+}
+oneline() { printf '%s' "$1" | tr '\n' ' '; }
+# field OUTPUT LABEL: A or B after "LABEL: ", else nothing.
+field() {
+  printf '%s\n' "$1" | sed -n "s/^$2: \([AB]\)\$/\1/p" | head -n 1
+}
+# status_field OUTPUT INDEX: normal or unbootable, else nothing.
+status_field() {
+  printf '%s\n' "$1" | sed -En "s/^slot: $2, +retry_count: [0-9]+, +status: (normal|unbootable)\$/\1/p" | head -n 1
+}
+status_of() {
+  case "$1" in
+    A) echo "$status_A" ;;
+    B) echo "$status_B" ;;
+  esac
+}
+
+# check_current: before RAUC writes or switches slots, NVIDIA and RAUC
+# (rauc.slot= on the kernel command line) must agree on the slot that runs;
+# otherwise RAUC's target could be that slot.
+check_current() {
+  local rauc_slot
+  rauc_slot=$(tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n 's/^rauc\.slot=//p' | tail -n 1)
+  [ -z "$rauc_slot" ] || [ "$rauc_slot" = "$cur" ] ||
+    die "NVIDIA runs slot $cur, the kernel command line says rauc.slot=$rauc_slot: not changing any slot"
+}
+
+# set_active SLOT: the slot the next boot starts, checked afterwards.
+set_active() {
+  local out
+  out=$("$nvbootctrl" -t rootfs set-active-boot-slot "$(index_of "$1")" 2>&1) ||
+    die "nvbootctrl -t rootfs set-active-boot-slot $(index_of "$1") failed: $(oneline "$out")"
+  load
+  [ "$act" = "$1" ] || die "nvbootctrl set slot $1 active, but reports slot $act as the next one"
+}
+
+# --- RootfsStatusSlotA/B: 0 normal, 0xFF unbootable -------------------------
+# An efivarfs file: 4 bytes of attributes (7: non-volatile, boot service and
+# runtime access, as NVIDIA's firmware makes them), then the UINT32 value,
+# little-endian. Written in one go, as NVIDIA's own scripts write their
+# variables; efivarfs keeps the file immutable in between.
+set_status() {
+  local var="$efivars/RootfsStatusSlot$1-$nvidia_guid" tmp byte got
+  case "$2" in
+    normal) byte=00 ;;
+    unbootable) byte=ff ;;
+  esac
+  [ -d "$efivars" ] || die "no EFI variables at $efivars (efivarfs not mounted, or the kernel without efi=runtime)"
+  [ -e "$var" ] || die "EFI variable RootfsStatusSlot$1 is missing: NVIDIA's rootfs A/B was not set up by the flash"
+  tmp=$(mktemp)
+  # shellcheck disable=SC2059 # the format carries the value's byte
+  printf "\\x07\\x00\\x00\\x00\\x$byte\\x00\\x00\\x00" >"$tmp"
+  "$chattr" -i "$var" 2>/dev/null || true
+  if ! dd if="$tmp" of="$var" bs=8 count=1 2>/dev/null; then
+    rm -f "$tmp"
+    die "could not write EFI variable RootfsStatusSlot$1"
+  fi
+  rm -f "$tmp"
+  "$chattr" +i "$var" 2>/dev/null || true
+  got=$(od -An -tx1 -j4 -N1 "$var" | tr -d ' \n')
+  [ "$got" = "$byte" ] || die "EFI variable RootfsStatusSlot$1 reads $got after writing $byte"
+  load
+}
+
+# --- this backend's own state on /data ----------------------------------------
+state_get() {
+  [ -r "$state_file" ] || return 0
+  sed -n "s/^$1=//p" "$state_file" | tail -n 1
+}
+# state_set KEY [VALUE]: without VALUE the key goes.
+state_set() {
+  local tmp="$state_file.new"
+  mkdir -p "$(dirname "$state_file")"
+  { [ -r "$state_file" ] && grep -v "^$1=" "$state_file" || true; } >"$tmp"
+  [ "$#" -lt 2 ] || echo "$1=$2" >>"$tmp"
+  mv "$tmp" "$state_file"
+}
+# end_trial SLOT: SLOT is no longer on trial.
+end_trial() {
+  if [ "$(state_get trial)" = "$1" ]; then
+    state_set trial
+    state_set trial-boots
+  fi
+}
+
+# known_good SLOT: SLOT has been marked good while it ran, and the firmware
+# has not given up on it since.
+known_good() { [ "$(state_get "$1")" = good ] && [ "$(status_of "$1")" = normal ]; }
+
+set_primary() {
+  local other
+  check_current
+  other=$(other_of "$cur")
+  if [ "$1" = "$cur" ]; then
+    # The running slot boots next: drop a switch to the other slot.
+    [ "$act" = "$cur" ] || set_active "$cur"
+    end_trial "$other"
+  else
+    # The other slot boots next, on trial. The firmware takes it only when
+    # it is not unbootable; if the switch fails, it is unbootable again.
+    set_status "$1" normal
+    if ! (set_active "$1"); then
+      (set_status "$1" unbootable) || true
+      die "slot $1 is not the next boot; slot $cur stays"
+    fi
+    state_set "$cur" good
+    state_set "$1" trying
+    state_set trial "$1"
+    state_set trial-boots 0
+  fi
+}
+
+get_state() {
+  if [ "$1" = "$cur" ] || known_good "$1"; then
+    echo good
+  else
+    echo bad
+  fi
+}
+
+set_state() {
+  local out
+  case "$2" in
+    good)
+      # Only a slot that runs is vouched for.
+      [ "$1" = "$cur" ] || return 0
+      # NVIDIA's "boot successful": the count of this slot starts over.
+      out=$("$nvbootctrl" verify 2>&1) || die "nvbootctrl verify failed: $(oneline "$out")"
+      state_set "$1" good
+      end_trial "$1"
+      ;;
+    bad)
+      check_current
+      if [ "$1" = "$cur" ]; then
+        # The running slot must not stay the next boot: hand it to the other
+        # slot, but only to one known to boot. The firmware may still fall
+        # back to it: it boots.
+        known_good "$(other_of "$1")" || die "slot $1 is the only one known to boot; not marking it bad"
+        set_active "$(other_of "$1")"
+        state_set "$1" bad
+        end_trial "$1"
+      else
+        # RAUC is about to write this slot, or gives up on it: the next boot
+        # is the running slot's, and the firmware must not fall back to it
+        # either (as NVIDIA's own update engine does before it writes a
+        # slot).
+        [ "$act" = "$cur" ] || set_active "$cur"
+        state_set "$1" bad
+        end_trial "$1"
+        set_status "$1" unbootable
+      fi
+      ;;
+    *) die "unknown state '$2' (good or bad)" ;;
+  esac
+}
+
+[ "$#" -ge 1 ] || die "usage: tegra-rootfs-ab get-primary|set-primary SLOT|get-state SLOT|set-state SLOT STATE|get-current"
+cmd=$1
+shift
+# want_args N USAGE ARG...: exactly N arguments after the command.
+want_args() { [ "$#" -eq $(($1 + 2)) ] || die "usage: tegra-rootfs-ab $cmd${2:+ $2}"; }
+case "$cmd" in
+  get-primary)
+    want_args 0 "" "$@"
+    load
+    echo "$act"
+    ;;
+  set-primary)
+    want_args 1 SLOT "$@"
+    index_of "$1" >/dev/null
+    load
+    set_primary "$1"
+    ;;
+  get-state)
+    want_args 1 SLOT "$@"
+    index_of "$1" >/dev/null
+    load
+    get_state "$1"
+    ;;
+  set-state)
+    want_args 2 "SLOT good|bad" "$@"
+    index_of "$1" >/dev/null
+    case "$2" in good | bad) ;; *) die "unknown state '$2' (good or bad)" ;; esac
+    load
+    set_state "$1" "$2"
+    ;;
+  get-current)
+    want_args 0 "" "$@"
+    load
+    echo "$cur"
+    ;;
+  *) die "unknown command '$cmd'" ;;
+esac

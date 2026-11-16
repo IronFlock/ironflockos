@@ -1,0 +1,5 @@
+Current rootfs slot: A
+Active rootfs slot: A
+num_slots: 2
+slot: 0,             retry_count: 2,             status: normal
+slot: 1,             retry_count: 0,             status: unbootable

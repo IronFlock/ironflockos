@@ -1,0 +1,18 @@
+What NVIDIA's nvbootctrl of Jetson Linux r39.2.1 (nvidia-l4t-bootloader-utils
+39.2.1-20260806224157) prints for `nvbootctrl -t rootfs dump-slots-info`, for
+test/unit/tegra-rootfs-ab.bats. Nobody has recorded these on a module yet
+(WP-6.6). They are written by hand from the tool's format strings
+(`Current rootfs slot: %s`, `Active rootfs slot: %s`, `num_slots: %d`,
+`slot: %d,             retry_count: %d,             status: %s` with
+`normal` or `unbootable`, `RootFS A/B is not enabled.`), and the slot letters
+as NVIDIA's own nv-l4t-bootloader-update.sh reads them from the bootloader's
+lines (`awk '{print $4}'` gives A or B). Nothing here is NVIDIA's.
+
+- dump-slots-info.flashed: a module just flashed with ROOTFS_AB=1; slot A
+  runs, both slots have their three tries.
+- dump-slots-info.fallen-back: the firmware has given slot B up after three
+  boots of it and runs slot A again, which has used one try since.
+- dump-slots-info.ab-disabled: a module flashed without rootfs A/B.
+
+fake-nvbootctrl answers the commands the backend uses from a model of the
+module (fake-nvbootctrl's header) and prints the same format.

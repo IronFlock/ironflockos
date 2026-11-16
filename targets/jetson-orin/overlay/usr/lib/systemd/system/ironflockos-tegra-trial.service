@@ -1,0 +1,6 @@
+[Unit]
+Description=IronFlockOS: reboot a slot on trial that was not marked good
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/ironflockos/tegra-slot-trial deadline

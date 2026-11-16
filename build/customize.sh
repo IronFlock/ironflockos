@@ -209,7 +209,12 @@ else
   # (docs/build.md, "The screen").
   systemctl --root="$ROOT" enable ironflockos-console-password.service
   # GRUB counts every boot as a try; the Pi's tryboot counts only the first
-  # boot of an update, and Jetson has a backend of its own.
+  # boot of an update. NVIDIA's firmware counts every warm boot nobody
+  # verified: on Jetson a slot not on trial is kept, and a slot on trial is
+  # rebooted until the firmware falls back (tegra-slot-trial).
+  if [ "$BOOTLOADER" = tegra ]; then
+    systemctl --root="$ROOT" enable ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer
+  fi
   if [ "$BOOTLOADER" = grub-efi ]; then
     systemctl --root="$ROOT" enable ironflockos-slot-proven.path ironflockos-slot-keep.timer
     # The screen (docs/build.md): the device's own splash picture and its
@@ -267,16 +272,25 @@ if [ "$VARIANT" = nvidia ]; then
   [ -x "$ROOT/usr/bin/nvidia-container-runtime" ] || die "nvidia-container-runtime is missing"
 fi
 if [ "$BOOTLOADER" = tegra ]; then
-  # NVIDIA's boot-time services stay off: nv-l4t-bootloader-config updates
-  # the QSPI firmware on its own (IronFlockOS's lane 2 does, WP-6.5), and
-  # nv-rootfs-validation-config marks the root slot good (IronFlockOS's health
-  # gate does, WP-6.3). NVIDIA puts the units into /etc/systemd/system, where
-  # the mask goes: the files make way (/opt/nvidia keeps NVIDIA's copies).
+  # NVIDIA's boot-time services stay off. nv-l4t-bootloader-config updates
+  # the QSPI firmware on its own (IronFlockOS's lane 2 does, WP-6.5) and
+  # runs `nvbootctrl verify` at every boot, which would end every trial of an
+  # updated slot before the device-agent has spoken (IronFlockOS's health
+  # gate verifies the boot instead, WP-6.3: tegra-rootfs-ab, tegra-slot-trial).
+  # nv-rootfs-validation-config, ordered before it, reboots for as long as
+  # a validation script of the user fails, without a bound. NVIDIA puts the
+  # units into /etc/systemd/system, where the mask goes: the files make way
+  # (/opt/nvidia keeps NVIDIA's copies).
   for u in nv-l4t-bootloader-config.service nv-rootfs-validation-config.service; do
     rm -f "$ROOT/etc/systemd/system/$u" "$ROOT/etc/systemd/system/multi-user.target.wants/$u"
   done
   systemctl --root="$ROOT" mask nv-l4t-bootloader-config.service nv-rootfs-validation-config.service
   [ -x "$ROOT/usr/bin/nvidia-container-runtime" ] || die "nvidia-container-runtime is missing"
+  # The RAUC backend's tool (nvidia-l4t-bootloader-utils).
+  [ -x "$ROOT/usr/sbin/nvbootctrl" ] || die "nvbootctrl is missing (nvidia-l4t-bootloader-utils)"
+  for unit in ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer; do
+    systemctl --root="$ROOT" is-enabled "$unit" >/dev/null || die "$unit is not enabled"
+  done
 fi
 
 # --- IronFlock: the agent and the host defaults, by ironflock bake -------

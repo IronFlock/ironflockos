@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Checks of jetson-orin's root tree without a Jetson (WP-6.2): Ubuntu 24.04
-# with NVIDIA's L4T packages at the pinned versions, IronFlockOS on top, and the
-# tree's own binaries run in a chroot (native on an arm64 host). The tree is
-# what `just rootfs jetson-orin base` leaves in IRONFLOCKOS_WORK; the boot is a
-# hardware check once the layout and flash package exist (WP-6.4, WP-6.6).
+# Checks of jetson-orin's root tree without a Jetson (WP-6.2, WP-6.3): Ubuntu
+# 24.04 with NVIDIA's L4T packages at the pinned versions, IronFlockOS on top
+# with the RAUC backend over nvbootctrl and its health gate, and the tree's own
+# binaries run in a chroot (native on an arm64 host). The tree is what `just
+# rootfs jetson-orin base` leaves in IRONFLOCKOS_WORK; the boot and the A/B
+# switch are hardware checks once the flash package exists (WP-6.4, WP-6.6).
 #   sudo test/image/jetson-rootfs-check.sh ROOT
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -114,9 +115,20 @@ for setting in ptp.conf proxy.conf ca.crt; do
 done
 check "no unit marks the slot good at boot (the device-agent does, once online)" \
   test ! -e "$root/usr/lib/systemd/system/ironflockos-mark-good.service"
+# nv-l4t-bootloader-config runs `nvbootctrl verify` at every boot, which would
+# end the trial of an updated slot before the device-agent has spoken.
 for unit in rauc-mark-good.service nv-l4t-bootloader-config.service nv-rootfs-validation-config.service; do
   check "$unit is masked" bash -c "[ \"\$(systemctl --root='$root' is-enabled $unit)\" = masked ]"
 done
+# --- A/B over nvbootctrl and the health gate (WP-6.3) ----------------------
+check "RAUC's custom backend is tegra-rootfs-ab, executable" \
+  bash -c "grep -qx bootloader-custom-backend=/usr/lib/ironflockos/tegra-rootfs-ab '$root/etc/rauc/system.conf' && test -x '$root/usr/lib/ironflockos/tegra-rootfs-ab'"
+check "tegra-slot-trial is executable" test -x "$root/usr/lib/ironflockos/tegra-slot-trial"
+for unit in ironflockos-tegra-keep.timer ironflockos-tegra-trial.timer; do
+  check "$unit is enabled, and named in a preset for each slot's first boot" \
+    bash -c "systemctl --root='$root' -q is-enabled $unit && grep -qx 'enable $unit' '$root/usr/lib/systemd/system-preset/10-ironflockos-tegra.preset'"
+done
+
 check "the agent is baked in" test -x "$root/usr/lib/ironflock/device-agent"
 check "ironflock is baked in as /usr/bin/ironflock" test -x "$root/usr/bin/ironflock"
 check "image.json names ironflock_version, not the init_version of ironflock-init" \
@@ -145,6 +157,8 @@ check "chroot: ironflock runs" in_root /usr/bin/ironflock version
 check "chroot: nvidia-ctk runs" in_root /usr/bin/nvidia-ctk --version
 check "chroot: nvidia-container-cli runs" in_root /usr/bin/nvidia-container-cli --version
 check "nvbootctrl is there (the RAUC backend's tool, WP-6.3)" test -x "$root/usr/sbin/nvbootctrl"
+check "chroot: the RAUC backend runs (and refuses an unknown command)" \
+  bash -c "chroot '$root' /usr/lib/ironflockos/tegra-rootfs-ab frobnicate 2>&1 | grep -q 'unknown command'"
 check "chroot: the linker finds libnvidia-ml" bash -c "chroot '$root' ldconfig -p | grep -q 'libnvidia-ml.so.1 '"
 # libcuda of both GPU flavours is under /opt/nvidia/l4t-gpu-libs; NVIDIA's
 # nv-load-gpu-libs links the board's (nvgpu on Orin) into the linker's path

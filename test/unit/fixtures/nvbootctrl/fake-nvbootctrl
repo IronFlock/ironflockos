@@ -1,0 +1,89 @@
+#!/bin/sh
+# A stand-in for NVIDIA's nvbootctrl (r39.2.1), for the unit tests of
+# tegra-rootfs-ab. It answers from a model of the module in $FAKE_NV:
+#
+#   current, active           A or B: the slot that runs, the next boot's
+#   retry_A, retry_B          the tries left in the PMC scratch register
+#   efivars/RootfsStatusSlot{A,B}-<guid>
+#                             the slots' status as efivarfs files (4 bytes of
+#                             attributes, then 00 normal or ff unbootable)
+#   log                       every call, one line each
+#   fail-<command>            that command fails
+#   ab-disabled               rootfs A/B is off: every rootfs command says so
+#   refuse-unbootable         set-active-boot-slot refuses an unbootable slot
+#                             (what the tool may do; the backend must not
+#                             depend on either answer)
+#   ignore-set-active         set-active-boot-slot succeeds but changes nothing
+set -eu
+m=${FAKE_NV:?}
+guid=781e084c-a330-417c-b678-38e696380cb9
+echo "$*" >>"$m/log"
+
+status() { # status A|B: normal or unbootable
+  if [ "$(od -An -tx1 -j4 -N1 "$m/efivars/RootfsStatusSlot$1-$guid" | tr -d ' \n')" = ff ]; then
+    echo unbootable
+  else
+    echo normal
+  fi
+}
+fails() {
+  if [ -e "$m/fail-$1" ]; then
+    echo "Error: $1 failed (fake)"
+    exit 1
+  fi
+}
+
+target=bootloader
+if [ "${1:-}" = -t ]; then
+  target=$2
+  shift 2
+fi
+[ "$target" = rootfs ] || [ "${1:-}" = verify ] || {
+  echo "fake-nvbootctrl: only -t rootfs and verify" >&2
+  exit 2
+}
+if [ "$target" = rootfs ] && [ -e "$m/ab-disabled" ]; then
+  echo "RootFS A/B is not enabled."
+  exit 1
+fi
+case "${1:-}" in
+  dump-slots-info)
+    fails dump-slots-info
+    printf 'Current rootfs slot: %s\n' "$(cat "$m/current")"
+    printf 'Active rootfs slot: %s\n' "$(cat "$m/active")"
+    printf 'num_slots: %d\n' 2
+    printf 'slot: %d,             retry_count: %d,             status: %s\n' 0 "$(cat "$m/retry_A")" "$(status A)"
+    printf 'slot: %d,             retry_count: %d,             status: %s\n' 1 "$(cat "$m/retry_B")" "$(status B)"
+    ;;
+  get-current-slot)
+    case "$(cat "$m/current")" in A) echo 0 ;; B) echo 1 ;; esac
+    ;;
+  set-active-boot-slot)
+    fails set-active-boot-slot
+    case "${2:-}" in
+      0) slot=A ;;
+      1) slot=B ;;
+      *)
+        echo "Error setting active boot slot: invalid slot"
+        exit 1
+        ;;
+    esac
+    if [ -e "$m/refuse-unbootable" ] && [ "$(status "$slot")" = unbootable ]; then
+      echo "Error: the active chain $2 is unbootable, switch failed!"
+      exit 1
+    fi
+    [ -e "$m/ignore-set-active" ] || echo "$slot" >"$m/active"
+    ;;
+  verify)
+    fails verify
+    # The scratch register is cleared: the next boot starts with full tries
+    # (none for an unbootable slot).
+    for s in A B; do
+      if [ "$(status "$s")" = normal ]; then echo 3; else echo 0; fi >"$m/retry_$s"
+    done
+    ;;
+  *)
+    echo "fake-nvbootctrl: unknown command ${1:-}" >&2
+    exit 2
+    ;;
+esac
