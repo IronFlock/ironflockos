@@ -118,7 +118,15 @@ Sequence:
    signature (with `--json` an error of the kind `failed`); the host was
    asked for the catalog once per run and for nothing else,
    `/var/cache/ironflockos` keeps no bundle and no copy of the catalog, and
-   the slots are as they were. Then the device changes
+   the slots are as they were. `ironflock os reset --yes` (WP-5.5) refuses
+   with exit code 3, text and `--json`, run as `nobody` ("must run as root")
+   and, as root, while another device's `.flock` waits on the IRONFLOCKOS
+   partition (the device would enroll with it after the reset instead of
+   waiting for one; the message names the file). A refused `os reset`
+   requests nothing: the request, its part files and the `.flock` files on
+   the partition are as they were, and so are grubenv and RAUC's slots.
+   Without that `.flock` the device as written would reset; the reset runs in
+   step 5. Then the device changes
    hands: its owner, logged in over SSH, runs `sudo ironflock agent configure -c`
    with the `.flock` of another owner; the command outlives the owner's session,
    which it ends, and the device is the other device (the agent's copy, the
@@ -246,16 +254,21 @@ Sequence:
    curl refuses the server again.
    `rauc install` runs in the background. As soon as RAUC reports on D-Bus
    that it installs (its property `Operation` is `installing`), `rauc status`,
-   `ironflock os rollback --yes` and `ironflock os update --yes` (each also
-   with `--json`) run back to back, and RAUC is asked again. When it was
-   installing before and after them, both `ironflock` commands must refuse
-   with exit code 3 and say that RAUC is installing an update right now
-   (with `--json` an error of the kind `precondition`). An installation that
-   ended during them leaves them kept but not judged, which the log says.
-   Once installed, before the restart, `ironflock os rollback` refuses the
-   update that waits for its restart (exit code 3, "chosen to start with the
-   next restart", text and `--json`), changes nothing, and GRUB would start
-   slot B.
+   `ironflock os rollback --yes`, `ironflock os update --yes` and `ironflock
+   os reset --yes` (each also with `--json`) run back to back, and RAUC is
+   asked again. When it was installing before and after them, the three
+   `ironflock` commands must refuse with exit code 3 and say that RAUC is
+   installing an update right now (with `--json` an error of the kind
+   `precondition`). An installation that ended during them leaves them kept
+   but not judged, which the log says. Meanwhile another device's `.flock`
+   waits on the IRONFLOCKOS partition, so that `os reset` refuses even when
+   RAUC was not busy after all; no request is there afterwards.
+   Once installed, before the restart, `ironflock os rollback` and `ironflock
+   os reset` refuse the update that waits for its restart (exit code 3,
+   "chosen to start with the next restart", text and `--json`), change
+   nothing, and GRUB would start slot B. On slot B, before the test marks it
+   good, `ironflock os reset` refuses the system on trial (exit code 3, "was
+   not marked good yet"): the reset runs only in a system marked good.
 4. **Rollback** (`ironflock os rollback`, WP-5.3 of the CLI's plan), under
    KVM only: under emulation, on the arm64 runners, its two restarts would
    take many minutes, and only the refusals run there. On slot B, good, with
@@ -264,9 +277,13 @@ Sequence:
    last marked good, as it usually is here), `ironflock os rollback --yes`
    restarts the device into slot A. Its output and exit code go to files on `/data`,
    synced before the restart, and are read once the device runs again (the
-   test's shell answers early in the boot, before `/data` is mounted): exit
-   code 0 (from the file, else as the shell printed it before the restart;
-   when neither got out, the log says so and the result decides) and
+   test's shell answers early in the boot, before `/data` is mounted). The
+   command runs under a delay lock on the shutdown (`systemd-inhibit
+   --mode=delay`): logind holds the restart it asks for back until those
+   files are on the disk, for at most five seconds (`InhibitDelayMaxSec`).
+   The command ends with exit code 0 (from the file, else as the shell
+   printed it before the restart; when neither got out, the log says so and
+   the result decides) and prints
    "Rolled back to IronFlockOS <version> in slot A". The device is up on slot
    A and answers the test host; machine-id, host key, `/data`, the app's file
    in `/apps` and the enrolment are those of before; RAUC's record of the
@@ -285,31 +302,55 @@ Sequence:
    IronFlock again after a rollback (the plan's acceptance) cannot be seen
    in QEMU, where no platform answers: that is left to the hardware test
    (WP-5.7 of the CLI's plan).
-5. **Factory reset** ([ADR-0015](adr/0015-factory-reset-requested-on-the-ironflockos-partition.md)).
-   On slot B, with slot A holding the system it was updated from: a container
+5. **Factory reset** ([ADR-0015](adr/0015-factory-reset-requested-on-the-ironflockos-partition.md)),
+   through `ironflock os reset` (WP-5.5 of the CLI's plan, whose acceptance
+   is this step driven through the command).
+   On slot B, good, with slot A holding the system it was updated from: a container
    runs with a restart policy (its image is made in the VM from `sleep` and the
    libraries it links, as the harness has no registry), an app's file is in
-   `/apps`, and the site has a network profile and a `proxy.conf`. The test
-   writes `factory-reset.conf` with `keep-network=yes` and a new `.flock` (another
-   owner and name) to the IRONFLOCKOS partition, each under a temporary name and
-   renamed, as `ironflock os reset -c` does, and `factory-reset check` accepts
-   the request. The boot after the restart resets the device and restarts it by
+   `/apps`, and the site has a network profile and a `proxy.conf`. A request
+   with `keep-network=no` waits on the IRONFLOCKOS partition already, and so
+   does the `.flock` of a third device. Then `ironflock os reset -c
+   /root/ironflockos-ci-reset.flock --keep-network --yes --json` runs, with a
+   new `.flock` (another owner and name). Its output and exit code go to files
+   on the IRONFLOCKOS partition, as in step 4 under a delay lock on the
+   shutdown: the reset erases `/data`, and leaves the partition's other files
+   alone. The command ends with exit code 0, and its result is `action`
+   `reset`, `device` the old device's name, `keep_network` true, `new_device`
+   and `device_file` the new device and its file, `removed` the third
+   device's `.flock` and `replaced` true. On stderr it said what runs (the
+   image's version in slot B, the device's name), that it replaces the
+   request, which `.flock` goes, that it keeps the systems in both slots and
+   the network settings, and as whom the device enrolls. The command
+   restarts the device; the boot after that resets it and restarts it by
    itself. It comes up on slot B (the reset's restart counted as no failed try),
-   with `factory-reset.log` saying `result=done`, the request and the temporary
-   files gone, a new machine-id and host key, neither the container nor its
-   image nor `hello-world`, no app file or old journal, the old SSH user gone
+   with `factory-reset.log` saying `result=done` and `keep-network=yes` (the
+   command's request, not the one it replaced), the request, the temporary
+   files and the third device's `.flock` gone, a new machine-id and host key,
+   neither the container nor its image nor `hello-world`, no app file or old journal, the old SSH user gone
    and the device enrolled as the new one, the agent's copy of the `.flock` the
    new one; the network profile, `proxy.conf` and RAUC's
    record of slot B are kept; slot A, read with `debugfs`, has the image's
    hostname, `uninitialized` as machine-id and no `enrolled` mark; slot B,
-   proven before, is marked good again by `ironflockos-slot-keep`. Then the same
+   proven before, is marked good again by `ironflockos-slot-keep`, and
+   `ironflock status --json` reports slot B, no failed reset and the new
+   device's agent. Then the same
    request is put back as it was (content and time, as when the IRONFLOCKOS
    partition could not remove it) and the device restarts once: the reset is
    not done again, the journal says so, and the device keeps its machine-id
-   and new identity. With `--no-flock` the device stays unenrolled, with the
+   and new identity. This last part writes the file directly, not through
+   the command: every request the command writes is a new one, with a time
+   of its own. The test takes the request's checksum, size and time from
+   the record (`request=`), writes the command's content again with that
+   time, and checks that the file is the same request. With `--no-flock` the
+   command runs without `-c` and without the third device's `.flock` (it
+   would refuse that), its result has no `device` (the device was not
+   enrolled), and the device stays unenrolled, with the
    hostname `ironflockos`. A failure of the step prints the units the reset touches
    (`systemctl status`, their journal), the reset's record and state, the
-   IRONFLOCKOS partition and the reset's lines from the serial console.
+   IRONFLOCKOS partition and the reset's lines from the serial console. A
+   reset boot that does not restart by itself adds its own journal of the
+   reset.
 6. **Fallback.** A second update makes A primary; A boots once with `A_TRY=1`
    and nobody marks it good (as when the agent cannot reach the platform after
    an update); the next boot falls back to B. `ironflock os rollback` then
@@ -352,23 +393,27 @@ the `qemu-logs-*` artifact.
 **What `ironflock` reads and prints.** The `ironflock os` steps keep the real
 output of what the CLI parses and prints in `captured/` of the work
 directory, so that the CLI's fixtures (`cli/ironflockos/testdata/` and the
-tests of `os update` and `os rollback` in IronFlock/ironflock-cli), made up
-from RAUC's sources so far, can be replaced by it. One file per command:
+tests of `os update`, `os rollback` and `os reset` in
+IronFlock/ironflock-cli), made up from RAUC's sources so far, can be replaced by it. One file per command:
 `<NN>-<state>--<name>.json`, numbered in the order they ran, with `command`
 (the command line as the CLI's `commands.json` keys it, its words joined by
 spaces), `exit` (`null` when a command restarted the device before the shell
-could write it), `stdout` and `stderr`; and the files the CLI reads as they
+could write it), `stdout` and `stderr` (a command run as another user than
+root has `-as-<user>` in its name); and the files the CLI reads as they
 are (`--grubenv`, `--system.conf`, `--os-release`). The states:
 
 | State | The device |
 | --- | --- |
 | `fresh` | as written: slot A runs and is good, slot B holds nothing |
-| `busy` | RAUC installs into slot B: `rauc status`, `os rollback` and `os update` asked meanwhile |
+| `busy` | RAUC installs into slot B: `rauc status`, `os rollback`, `os update` and `os reset` asked meanwhile |
 | `install` | the output of `rauc install` that ended well |
 | `pending` | the update is installed in slot B and waits for the restart |
+| `on-trial` | slot B runs the update and is not marked good yet |
 | `updated` | slot B runs the update and is good; slot A holds the image's system |
 | `rolled-back` | after `os rollback`, slot A runs again, before the test marks it good |
 | `rolled-forward` | after the second `os rollback`, slot B runs again and is good |
+| `to-reset` | slot B runs and is good, a request with `keep-network=no` and (enrolled) another device's `.flock` wait on the IRONFLOCKOS partition; `os reset` runs here |
+| `reset` | after the factory reset: slot B runs and is good again, the device is the new one |
 | `fell-back` | slot A was tried and not marked good; slot B runs |
 
 `rauc status --detailed --output-format=json`, `grubenv` and `ironflock
@@ -399,12 +444,15 @@ releases never do (the open point of WP-0.5 in the CLI's plan); with one, the
 test would put it on `/data` and run it there against the same catalog.
 Until then the update into slot B is RAUC's own, as before.
 
-**When an update or a rollback fails.** A device must still boot and come
-online (the lifeline rule). The test checks what it can see of that:
+**When an update, a rollback or a reset fails.** A device must still boot
+and come online (the lifeline rule). The test checks what it can see of that:
 every refused `ironflock os` command leaves grubenv and RAUC's slots as they
 were, and GRUB's next slot (by `grub.cfg`'s rule) is the one that runs, or the
 installed update that waits; a refused update has downloaded and kept
-nothing; after each rollback the device is up and answers the test host.
+nothing; a refused reset has requested nothing and removed no `.flock`;
+after each rollback the device is up and answers the test host. A reset
+that fails or gives up is tested by `test/unit/factory-reset.bats`, not in
+QEMU.
 
 **The release images.** The tests above run on development builds, which
 trust a throwaway CA of their own build. A release pull request also runs

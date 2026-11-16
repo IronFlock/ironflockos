@@ -4,6 +4,7 @@
 |----------|---------|
 | [master-plan.md](master-plan.md) | The plan of record: goals, target architecture, phased roadmap, cross-repo changes, risks |
 | [implementation-plan.md](implementation-plan.md) | The work packages: status board, milestones, dependencies, per-WP scope, deliverables and acceptance; one GitHub issue per WP |
+| [kiosk-plan.md](kiosk-plan.md) | Phase 8, the screen of a device: boot splash, the usual keys, the contract with a screen app, the kiosk app; decisions and work packages WP-8.1 to WP-8.8 |
 | [build.md](build.md) | How an image is built: stages, artefacts, disk layout on a device, boot and A/B, the device settings, the factory reset and its contract for the CLI, local builds |
 | [testing.md](testing.md) | Unit tests, the QEMU image test, the hardware checklist |
 | [signing.md](signing.md) | The RAUC PKI in Cloud KMS: creating it, how releases sign, renewal |

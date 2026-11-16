@@ -21,7 +21,8 @@ Docker, fwupd, enrolled through `ironflock enroll`); ironflock in the image
 (WP-5.1 of the CLI's plan: /usr/bin/ironflock, `ironflock status`, its refusals, a .flock that
 is not accepted); `ironflock os` on the device as written (WP-5.2, WP-5.3:
 `os rollback` refuses, `os update` refuses a catalog of the test's own, which
-IronFlock did not sign); enrolled, the device changes hands with `sudo ironflock
+IronFlock did not sign; WP-5.5: `os reset` refuses a user other than root and
+a .flock that waits on the IRONFLOCKOS partition); enrolled, the device changes hands with `sudo ironflock
 agent configure -c` run by its owner over SSH, and back; for nvidia
 the driver, its modules and the container runtime without a GPU; reboot
 (state persists, a proxy.conf, a corporate CA chain as ca.crt and a static
@@ -30,12 +31,14 @@ boot is on text, ironflockos.boot=text, as the checks read the serial
 console): Plymouth from the initramfs, the screen read through QMP's
 screendump through the boot and after, a damaged splash.cpio, then the
 device's own picture with its refusals; update into slot B with the bundle of the same build
-(while RAUC installs, `os update` and `os rollback` refuse; installed, `os
-rollback` refuses the update that waits for its restart);
+(while RAUC installs, `os update`, `os rollback` and `os reset` refuse;
+installed, `os rollback` and `os reset` refuse the update that waits for its
+restart; on slot B before it is marked good, `os reset` refuses);
 under KVM, `ironflock os rollback` back to slot A and forward to slot B;
-factory reset (ADR-0015): the device in slot B, with a running container,
-resets, keeps its network settings and RAUC's state, enrolls with a new
-.flock, and slot A is cleared too;
+factory reset (ADR-0015) through `ironflock os reset -c --keep-network`
+(WP-5.5): the device in slot B, with a running container, resets, keeps its
+network settings and RAUC's state, enrolls with a new .flock, and slot A is
+cleared too;
 fallback: an update into slot A that is never marked good falls back to B,
 and `os rollback` refuses that slot;
 a kernel crash without a connection: the device restarts by itself on a slot
@@ -53,6 +56,7 @@ only; run with `python3 -I`.
 
 import argparse
 import base64
+import calendar
 import gzip
 import hashlib
 import http.server
@@ -584,6 +588,10 @@ TEST_FLOCK_NAME = "ironflockos-ci"
 # The device the factory reset enrolls it as.
 RESET_OWNER = "ironflockosreset"
 RESET_FLOCK_NAME = "ironflockos-ci-reset"
+# The device of the .flock that waits on the IRONFLOCKOS partition while
+# `ironflock os reset` runs (RESET_WAITING): never enrolled.
+WAITING_OWNER = "ironflockoswaiting"
+WAITING_FLOCK_NAME = "ironflockos-ci-waiting"
 # The device it becomes for a while with `ironflock agent configure -c`.
 OTHER_OWNER = "ironflockosother"
 OTHER_FLOCK_NAME = "ironflockos-ci-other"
@@ -1064,11 +1072,16 @@ TEST_BUNDLE = f"{CACHE}/test.raucb"
 # RAUC's own word on whether it installs (its D-Bus property Operation).
 RAUC_OPERATION = "busctl get-property de.pengutronix.rauc / de.pengutronix.rauc.Installer Operation"
 # Where a command that restarts the device leaves what it printed: /data
-# outlives the restart.
+# outlives the restart. The factory reset erases /data, so `os reset` leaves
+# it on the IRONFLOCKOS partition, whose other files the reset leaves alone.
 REBOOT_OUT = "/data/ironflockos-ci"
-# What `ironflock os update` and `os rollback` say while RAUC installs
-# (docs/cli.md of IronFlock/ironflock-cli).
+RESET_OUT = "/boot/efi/ironflockos-ci"
+# What `ironflock os update`, `os rollback` and `os reset` say while RAUC
+# installs (docs/cli.md of IronFlock/ironflock-cli).
 RAUC_BUSY = "RAUC is installing an update right now"
+# A .flock that waits on the IRONFLOCKOS partition: `os reset` without -c
+# refuses it, `os reset -c` removes it.
+RESET_WAITING = "/boot/efi/ironflockos-ci-waiting.flock"
 
 
 def grub_next(env):
@@ -1878,9 +1891,13 @@ class Runner:
         (ironflockos-ca.path), and curl refuses the test chain's server again."""
         d = TEST_CA_DIR
         self.vm.run("rm /data/ironflockos/ca.crt")
+        # The reload rebuilds the store and restarts containerd, Docker and
+        # the agent. Without KVM that took 150 s on arm64's real-time image
+        # (Docker began its restart 130 s after the file went), so the limit
+        # grows as the boot's does.
         self.wait_for(f"! grep -qxF \"$(sed -n 2p {d}/root.pem)\" {CA_BUNDLE}"
-                      " && [ \"$(systemctl is-active ironflockos-ca-reload.service)\" = inactive ]", 120,
-                      "the trust store to drop the test's CAs")
+                      " && [ \"$(systemctl is-active ironflockos-ca-reload.service)\" = inactive ]",
+                      120 if self.vm.accel != "tcg" else 600, "the trust store to drop the test's CAs")
         self.vm.run("test ! -e /usr/local/share/ca-certificates/ironflockos")
         rc, out = self.tls_rc()
         if rc != 60:
@@ -2219,16 +2236,20 @@ class Runner:
 
     def update_to_b(self):
         """The update into slot B, as before, with `ironflock os` around it
-        (WP-5.2, WP-5.3 of the CLI's plan): while RAUC writes slot B, `os
-        rollback` and `os update` refuse (exit code 3) and say that RAUC
-        installs; once it is installed and waits for the restart, `os rollback`
-        refuses that too and changes nothing."""
+        (WP-5.2, WP-5.3, WP-5.5 of the CLI's plan): while RAUC writes slot B,
+        `os rollback`, `os update` and `os reset` refuse (exit code 3) and say
+        that RAUC installs; once it is installed and waits for the restart, `os
+        rollback` and `os reset` refuse that too and change nothing; on slot B,
+        before it is marked good, `os reset` refuses a system on trial."""
         self.os_while_installing()
         primary = self.rauc_status().get("boot_primary")
         if primary != "rootfs.1":
             raise TestFailure(f"after the install the primary slot is {primary}, expected rootfs.1")
         self.snapshot("pending")
         upcoming = self.rollback_refused("pending", "chosen to start with the next restart")
+        if upcoming != "B":
+            raise TestFailure(f"with the update installed, GRUB would start slot {upcoming}, not B")
+        upcoming = self.reset_refused("pending", "chosen to start with the next restart")
         if upcoming != "B":
             raise TestFailure(f"with the update installed, GRUB would start slot {upcoming}, not B")
         self.vm.reboot(self.boot_timeout)
@@ -2245,6 +2266,10 @@ class Runner:
             self.enrolled(first=False)
         if self.vm.run("ssh-keygen -lf /data/etc/ssh/ssh_host_ed25519_key.pub").strip() != self.host_key:
             raise TestFailure("the SSH host key changed with the update")
+        # Before the agent's mark the reset would run in a system that has
+        # not proven itself (or at the restart not in it at all).
+        self.snapshot("on-trial")
+        self.reset_refused("on-trial", "was not marked good yet")
         self.mark_good("B", "rootfs.1")
         self.wait_for("test -e /var/lib/ironflockos/slot-proven", 60, "slot B to remember it was marked good")
         # The new slot's store gets the device's CAs on its first boot; then
@@ -2385,6 +2410,40 @@ class Runner:
             raise TestFailure(f"a refused os rollback changed the slots:\nbefore: {before}\nafter: {after}")
         return grub_next(after[0])
 
+    def partition_files(self):
+        """The files of a factory reset on top of the IRONFLOCKOS partition, with
+        their size and time of change: the request and its part files, the
+        reset's own files, and every .flock."""
+        return self.vm.run("ls -A -l --time-style=+%s /boot/efi | grep -i -e 'factory-reset' -e '\\.flock$' || true")
+
+    def reset_refused(self, state, reason, user=None):
+        """`ironflock os reset --yes` (WP-5.5 of the CLI's plan) refuses in this
+        state, as text and with --json: exit code 3 and the reason docs/cli.md
+        gives; with user, run as that user, not as root. It requests nothing:
+        the files on the IRONFLOCKOS partition are as they were (no request, no
+        part file, no .flock removed), and so are grubenv and RAUC's slots.
+        Returns the slot GRUB starts next."""
+        before = self.slots_state(), self.partition_files()
+        suffix = f"-as-{user}" if user else ""
+        for name, argv in (("ironflock-os-reset", ["ironflock", "os", "reset", "--yes"]),
+                           ("ironflock-os-reset-json", ["ironflock", "os", "reset", "--yes", "--json"])):
+            if user:
+                argv = ["runuser", "-u", user, "--"] + argv
+            rc, out, err = self.capture(state, name + suffix, argv)
+            if rc != 3 or reason not in self.failure(argv, rc, out, err, "precondition"):
+                raise TestFailure(f"`{' '.join(argv)}` ended with {rc}, expected 3 and {reason!r}:\n{out}{err}")
+        after = self.slots_state(), self.partition_files()
+        if after != before:
+            raise TestFailure(f"a refused os reset changed the slots or the IRONFLOCKOS partition:\n"
+                              f"before: {before}\nafter: {after}")
+        return grub_next(after[0][0])
+
+    def put_waiting_flock(self):
+        """A .flock of another device on the IRONFLOCKOS partition, as one that
+        waits for the next boot (RESET_WAITING)."""
+        data = base64.b64encode(json.dumps(test_flock(WAITING_FLOCK_NAME, WAITING_OWNER, "4714")).encode()).decode()
+        self.vm.run(f"echo {data} | base64 -d > {RESET_WAITING} && sync && test -s {RESET_WAITING}")
+
     def update_refused(self, state):
         """`ironflock os update --yes --download-base <the test host>` reads the
         test catalog (put_test_catalog), which names a release above this
@@ -2416,8 +2475,12 @@ class Runner:
         """`ironflock os` on the device as it was written: slot A runs and is
         good, slot B holds nothing. `os rollback` refuses, as there is nothing to
         go back to, and the device keeps starting slot A; `os update` refuses
-        the test's catalog (update_refused). What ironflock reads of the
-        device is kept, with RAUC's system.conf and os-release."""
+        the test's catalog (update_refused). `os reset` (WP-5.5) refuses a
+        user other than root, and, as root, a .flock that waits on the
+        IRONFLOCKOS partition: the device would enroll with it after the reset
+        instead of waiting for one. Without that .flock the device as written
+        would reset; the reset itself runs later, on slot B. What ironflock
+        reads of the device is kept, with RAUC's system.conf and os-release."""
         status = self.snapshot("fresh")
         self.capture_file("fresh", "system.conf", "/etc/rauc/system.conf")
         self.capture_file("fresh", "os-release", "/etc/os-release")
@@ -2427,23 +2490,37 @@ class Runner:
         if upcoming != "A":
             raise TestFailure(f"after the refused rollback GRUB would start slot {upcoming}, not A")
         self.update_refused("fresh")
+        self.reset_refused("fresh", "must run as root", user="nobody")
+        self.vm.run("test -z \"$(ls /boot/efi/*.flock 2>/dev/null)\"")
+        self.put_waiting_flock()
+        try:
+            upcoming = self.reset_refused("fresh", f"the IRONFLOCKOS partition holds {RESET_WAITING} already")
+        finally:
+            self.vm.run(f"rm -f {RESET_WAITING} && sync")
+        if upcoming != "A":
+            raise TestFailure(f"after the refused reset GRUB would start slot {upcoming}, not A")
 
     def os_while_installing(self):
         """The update's bundle, installed by `rauc install` in the background.
         As soon as RAUC reports that it installs (Operation on D-Bus), the
         checks run back to back in the VM: `rauc status` as ironflock asks it,
-        `ironflock os rollback --yes` and `ironflock os update --yes` (each also
-        with --json), then RAUC is asked again. Installing before and after,
-        RAUC was busy all through the checks: then both commands refuse with
-        exit code 3, saying that RAUC installs. An installation that ended
-        during the checks leaves them kept but not judged (logged). rauc
-        install's own output is kept as well."""
+        `ironflock os rollback --yes`, `ironflock os update --yes` and
+        `ironflock os reset --yes` (each also with --json), then RAUC is asked
+        again. Installing before and after, RAUC was busy all through the
+        checks: then the three commands refuse with exit code 3, saying that
+        RAUC installs. An installation that ended during the checks leaves them
+        kept but not judged (logged). A .flock waits on the IRONFLOCKOS
+        partition meanwhile, so that `os reset` refuses also when RAUC was not
+        busy after all: it must not reset the device here. rauc install's own
+        output is kept as well."""
         update = ["ironflock", "os", "update", "--yes", "--download-base", self.http]
         checks = [("rauc-status", RAUC_STATUS),
                   ("ironflock-os-rollback", ["ironflock", "os", "rollback", "--yes"]),
                   ("ironflock-os-rollback-json", ["ironflock", "os", "rollback", "--yes", "--json"]),
                   ("ironflock-os-update", update),
-                  ("ironflock-os-update-json", update[:4] + ["--json"] + update[4:])]
+                  ("ironflock-os-update-json", update[:4] + ["--json"] + update[4:]),
+                  ("ironflock-os-reset", ["ironflock", "os", "reset", "--yes"]),
+                  ("ironflock-os-reset-json", ["ironflock", "os", "reset", "--yes", "--json"])]
         self.fetch_bundle()
         d = "/run/ironflockos-ci-install"
         install = ["rauc", "install", TEST_BUNDLE]
@@ -2455,8 +2532,16 @@ class Runner:
                   f"{RAUC_OPERATION} >{d}/before 2>&1"]
         script += [self.capture_snippet(argv, f"{d}/{name}") for name, argv in checks]
         script += [f"{RAUC_OPERATION} >{d}/after 2>&1"]
-        # Its exit code is busctl's; what before and after say is judged below.
-        self.vm.run("; ".join(script), timeout=400, check=False)
+        self.vm.run("test -z \"$(ls /boot/efi/*.flock 2>/dev/null)\"")
+        self.put_waiting_flock()
+        try:
+            # Its exit code is busctl's; what before and after say is judged below.
+            self.vm.run("; ".join(script), timeout=400, check=False)
+            # No request, and the .flock still there.
+            self.vm.run(f"test ! -e /boot/efi/factory-reset.conf && test -s {RESET_WAITING}"
+                        " && test -z \"$(ls -A /boot/efi | grep '^\\.factory-reset.*\\.part$')\"")
+        finally:
+            self.vm.run(f"rm -f {RESET_WAITING} && sync")
         before = self.vm.run(f"cat {d}/before", check=False).strip()
         after = self.vm.run(f"cat {d}/after", check=False).strip()
         results = [(argv, self.collect("busy", name, argv, f"{d}/{name}")) for name, argv in checks]
@@ -2478,25 +2563,36 @@ class Runner:
                 raise TestFailure(f"`{' '.join(argv)}` while RAUC installs ended with {rc}, expected 3 and "
                                   f"{RAUC_BUSY!r}:\n{out}{err}")
 
-    def reboot_by(self, state, name, argv):
+    def reboot_by(self, state, name, argv, where=REBOOT_OUT, kernels=1):
         """Runs argv, an ironflock command that restarts the device when it
-        succeeds, and waits for the restart. What it prints and its exit code
-        go to files on /data, synced before the shell says the command ended;
-        /data outlives the restart. They are read once the device runs again:
-        the debug shell answers early in the boot, before /data is mounted,
-        and a read right after the restart finds the root slot's empty folder
-        under it. The exit code is the file's, else the one the shell printed
-        before the restart, else None (the restart came first). A command
-        that ends without the restart fails the step at once."""
-        prefix = f"{REBOOT_OUT}/{name}"
+        succeeds, and waits for the restart: for the shell of the kernels-th
+        kernel that starts after it (2 for a factory reset, whose boot restarts
+        by itself). What the command prints and its exit code go to files in
+        where, synced before the shell says the command ended: on /data, which
+        outlives the restart, or on the IRONFLOCKOS partition for a factory
+        reset, which erases /data. The command runs under a delay lock on
+        the shutdown (systemd-inhibit): logind holds the restart it asks for
+        back until those files are on the disk, for at most its
+        InhibitDelayMaxSec (5 seconds by default). They are read once the
+        device runs again: the debug shell answers early in the boot, before
+        /data is mounted, and a read right after the restart finds the root
+        slot's empty folder under it. The exit code is the file's, else the one
+        the shell printed before the restart, else None (the restart came
+        first). A command that ends without the restart fails the step at
+        once. Returns what the command wrote to stdout and stderr."""
+        prefix = f"{where}/{name}"
         line = " ".join(argv)
-        self.vm.run(f"mkdir -p {REBOOT_OUT} && rm -f {prefix}.*")
+        self.vm.run(f"mkdir -p {where} && rm -f {prefix}.*")
+        # logind answers: systemd-inhibit can take its lock.
+        self.vm.run("systemd-inhibit --list --no-pager >/dev/null")
         old = self.vm.run("cat /proc/sys/kernel/random/boot_id").strip()
         starts = self.vm.kernel_starts()
         tag = uuid.uuid4().hex[:8]
         self.vm.buf = b""
-        self.vm._send(f"{self.capture_snippet(argv, prefix)}; sync; echo __EN''D_{tag}=$(cat {prefix}.rc)\r")
-        deadline = time.time() + self.boot_timeout
+        held = (f"systemd-inhibit --what=shutdown --mode=delay --who=ironflockos-ci --why='keeping what the command "
+                f"printed' sh -c {shlex.quote(self.capture_snippet(argv, prefix) + '; sync')}")
+        self.vm._send(f"{held}; echo __EN''D_{tag}=$(cat {prefix}.rc)\r")
+        deadline = time.time() + self.boot_timeout * kernels
         said = None
         while self.vm.kernel_starts() <= starts:
             m = self.vm._read_until(rb"__END_" + tag.encode() + rb"=(\d+)", 2)
@@ -2506,22 +2602,41 @@ class Runner:
                 rc, out, err = self.collect(state, name, argv, prefix)
                 raise TestFailure(f"`{line}` ended with {said} and did not restart the device:\n{out}{err}")
             if time.time() > deadline:
-                raise TestFailure(f"`{line}` did not restart the device within {self.boot_timeout}s")
+                raise TestFailure(f"`{line}` did not restart the device within {self.boot_timeout * kernels}s")
             if m:
                 time.sleep(1)
-        if self.vm.wait_shell(max(10, deadline - time.time()), starts) == old:
+        try:
+            boot = self.vm.wait_shell(max(10, deadline - time.time()), starts + kernels - 1)
+        except TestFailure as e:
+            raise TestFailure(f"`{line}`: {e}{self.stuck_reset(starts) if kernels > 1 else ''}") from None
+        if boot == old:
             raise TestFailure(f"`{line}`: the same boot answers after the restart")
         self.wait_running()
-        self.vm.run("mountpoint -q /data")
+        # The file system of where: /data or /boot/efi.
+        self.vm.run(f"mountpoint -q {os.path.dirname(where)}")
         rc, out, err = self.collect(state, name, argv, prefix)
-        self.vm.run(f"rm -rf {REBOOT_OUT}")
+        self.vm.run(f"rm -rf {where} && sync")
         if rc is None:
             rc = said
         if rc is None:
             log(f"note: `{line}` restarted the device before its exit code was written; judged by its result")
         elif rc != 0:
             raise TestFailure(f"`{line}` ended with {rc}, yet the device restarted:\n{out}{err}")
-        return out
+        return out, err
+
+    def stuck_reset(self, starts):
+        """Why the boot of a factory reset, the first kernel after starts, did
+        not restart by itself: what its shell says, when it answers."""
+        if self.vm.kernel_starts() != starts + 1:
+            return ""
+        info = ""
+        try:
+            self.vm.wait_shell(60, starts)
+            info = "\n" + self.vm.run("journalctl -b --no-pager -o cat -u ironflockos-factory-reset; "
+                                      "cat /boot/efi/factory-reset.log; systemctl --failed --no-pager", check=False)
+        except TestFailure:
+            pass
+        return f"; the factory reset did not restart the device by itself{info}"
 
     def back_on(self, slot, other, installed_b):
         """The device after a rollback: up on slot, online (the test host
@@ -2586,7 +2701,7 @@ class Runner:
         installed_b = self.slot_installed("rootfs.1")
         proven_a = self.slot_a_proven()
         argv = ["ironflock", "os", "rollback", "--yes"]
-        out = self.reboot_by("updated", "ironflock-os-rollback", argv)
+        out, _ = self.reboot_by("updated", "ironflock-os-rollback", argv)
         if f"Rolled back to IronFlockOS {version} in slot A" not in out:
             raise TestFailure(f"`{' '.join(argv)}` printed no rollback to IronFlockOS {version} in slot A:\n{out}")
         self.back_on("A", "B", installed_b)
@@ -2596,7 +2711,8 @@ class Runner:
         self.keep_good("A", proven_a)
 
         argv = ["ironflock", "os", "rollback", "--yes", "--json"]
-        result = self.json_result(self.reboot_by("rolled-back", "ironflock-os-rollback-json", argv), " ".join(argv))
+        out, _ = self.reboot_by("rolled-back", "ironflock-os-rollback-json", argv)
+        result = self.json_result(out, " ".join(argv))
         want = {"action": "rolled_back", "slot": "B", "version": version, "from_slot": "A", "from_version": version}
         if {key: result.get(key) for key in want} != want:
             raise TestFailure(f"`{' '.join(argv)}` reported {result}, expected {want}")
@@ -2623,25 +2739,6 @@ class Runner:
             if slot in entry:
                 return (entry[slot].get("slot_status") or {}).get("installed", {}).get("timestamp")
         return None
-
-    def reset_reboot(self):
-        """Restart into a factory reset: the reset boot restarts by itself once
-        it is done, so the shell is the one of the second kernel after this."""
-        starts = self.vm.kernel_starts()
-        self.vm._send("systemctl reboot\r")
-        try:
-            self.vm.wait_shell(self.boot_timeout * 2, starts + 1)
-        except TestFailure as e:
-            info = ""
-            if self.vm.kernel_starts() == starts + 1:
-                # The reset boot did not restart: its shell says why.
-                try:
-                    self.vm.wait_shell(60, starts)
-                    info = self.vm.run("journalctl -b --no-pager -o cat -u ironflockos-factory-reset; "
-                                       "cat /boot/efi/factory-reset.log; systemctl --failed --no-pager", check=False)
-                except TestFailure:
-                    pass
-            raise TestFailure(f"{e}; the factory reset did not restart the device by itself\n{info}") from None
 
     RESET_UNITS = ("ironflockos-factory-reset.service", "ironflockos-data-missing.service", "data.mount",
                    "ironflockos-data-layout.service", "ironflockos-proxy.service", "ironflockos-enroll.service",
@@ -2681,18 +2778,24 @@ class Runner:
 
     def _factory_reset(self):
         """Factory reset (ADR-0015, docs/build.md "Factory reset") of the
-        device in slot B, with the system it was updated from in slot A. Before
-        it: an app's container runs (an image made in the VM from its own
-        sleep and libc, with a restart policy), an app's files are in /apps, the
-        site has a network profile and a proxy.conf. A request with
-        keep-network=yes and a new .flock go onto the IRONFLOCKOS partition, as
-        `ironflock os reset -c` puts them there. The boot after it resets and
-        restarts by itself; the device then comes up on slot B without the old
+        device in slot B, with the system it was updated from in slot A,
+        through `ironflock os reset -c <new .flock> --keep-network --yes
+        --json` (WP-5.5 of the CLI's plan). Before it: an app's container runs
+        (an image made in the VM from its own sleep and libc, with a restart
+        policy), an app's files are in /apps, the site has a network profile
+        and a proxy.conf, a request with keep-network=no waits on the
+        IRONFLOCKOS partition, and so does the .flock of another device. The
+        command replaces the request, removes that .flock, puts the new one
+        there and restarts the device; its result and what it said go to the
+        IRONFLOCKOS partition (reboot_by). The boot after it resets and restarts
+        by itself; the device then comes up on slot B without the old
         identity, containers, logs and data, with its network settings and
         RAUC's state, enrolled as the new device; slot A is cleared too, and B,
         which had proven itself, is kept good. The same request, put back as it
         was (as when the IRONFLOCKOS partition could not remove it), is not done a
-        second time. With --no-flock the device stays unenrolled."""
+        second time. With --no-flock the device is not enrolled: the command
+        runs without -c and without the other .flock, and the device stays
+        unenrolled."""
         if self.booted() != "B":
             raise TestFailure(f"the factory reset starts on slot {self.booted()}, expected B")
         self.vm.run("test -x /usr/lib/ironflockos/factory-reset")
@@ -2714,32 +2817,65 @@ class Runner:
         installed = self.slot_installed("rootfs.1")
         if not installed:
             raise TestFailure("RAUC has no record of the installation into slot B")
-        # The request as the contract says (docs/build.md) and `ironflock os
-        # reset` writes it: the whole file under a temporary name, checked,
-        # renamed; then the .flock the same way, the only one on the partition.
-        self.vm.run("printf 'keep-network=yes\\n' > /boot/efi/.factory-reset.conf.part && sync")
-        out = self.vm.run("/usr/lib/ironflockos/factory-reset check /boot/efi/.factory-reset.conf.part").strip()
-        if out != "keep-network=yes":
-            raise TestFailure(f"factory-reset check says {out!r}")
-        self.vm.run("mv /boot/efi/.factory-reset.conf.part /boot/efi/factory-reset.conf && sync")
-        request_time = self.vm.run("stat -c %Y /boot/efi/factory-reset.conf").strip()
+        # A request waits already, one that would not keep the network: the
+        # command replaces it. With -c, a .flock of another device waits as
+        # well, which the command removes; the new .flock comes from root's
+        # home, as an owner would copy it onto the device.
+        self.vm.run("test ! -e /boot/efi/factory-reset.conf && test -z \"$(ls /boot/efi/*.flock 2>/dev/null)\"")
+        self.vm.run("printf 'keep-network=no\\n' > /boot/efi/factory-reset.conf && sync")
+        argv = ["ironflock", "os", "reset", "--keep-network", "--yes", "--json"]
         new_flock = None
         if self.flock:
-            new_flock = "ironflockos-ci-reset.flock"
-            data = base64.b64encode(json.dumps(test_flock(RESET_FLOCK_NAME, RESET_OWNER, "4712")).encode()).decode()
-            self.vm.run("test -z \"$(ls /boot/efi/*.flock 2>/dev/null)\"")
-            self.vm.run(f"echo {data} | base64 -d > /boot/efi/.factory-reset.flock.part && sync"
-                        f" && mv /boot/efi/.factory-reset.flock.part /boot/efi/{new_flock} && sync")
+            self.put_waiting_flock()
+            new_flock = f"{RESET_FLOCK_NAME}.flock"
+            source = f"/root/{new_flock}"
+            # `os reset -c` checks the .flock as `os flash` does: its serial
+            # number has to be a plain name too.
+            flock = dict(test_flock(RESET_FLOCK_NAME, RESET_OWNER, "4712"), serial_number=RESET_FLOCK_NAME)
+            data = base64.b64encode(json.dumps(flock).encode()).decode()
+            self.vm.run(f"echo {data} | base64 -d > {source} && chmod 600 {source}")
+            argv[3:3] = ["-c", source]
+        version = self.image_version()
+        self.snapshot("to-reset")
 
-        self.reset_reboot()
-        self.wait_running()
+        out, err = self.reboot_by("to-reset", "ironflock-os-reset-json", argv, where=RESET_OUT, kernels=2)
+        # The result (docs/cli.md of IronFlock/ironflock-cli, os-reset.schema.json).
+        result = self.json_result(out, " ".join(argv))
+        want = {"action": "reset", "device": None, "keep_network": True, "new_device": None, "device_file": None,
+                "removed": None, "replaced": True, "last_reset": None}
+        if self.flock:
+            want.update(device=TEST_FLOCK_NAME, new_device=RESET_FLOCK_NAME, device_file=new_flock,
+                        removed=[RESET_WAITING])
+        got = {key: result.get(key) for key in want}
+        if got != want:
+            raise TestFailure(f"`{' '.join(argv)}` reported {result}, expected {want}")
+        # What it said on stderr before it asked (--yes answered).
+        plan = [f"This device runs IronFlockOS {version} from slot B and is "
+                + (f"the IronFlock device {TEST_FLOCK_NAME}." if self.flock else "not enrolled: it has no .flock."),
+                "A factory reset is requested already and has not completed; this request replaces it",
+                f"It keeps IronFlockOS {version} in slot B, which runs, and ",
+                " in slot A, so updates and rollbacks work as before.",
+                "With --keep-network it keeps the network profiles"]
+        if self.flock:
+            plan += [f"These .flock files go from the IRONFLOCKOS partition first, as the device would enroll with "
+                     f"the newest: {RESET_WAITING}.", f"it enrolls as {RESET_FLOCK_NAME}"]
+        for line in plan:
+            if line not in err:
+                raise TestFailure(f"`{' '.join(argv)}` did not say {line!r} on stderr:\n{err}")
+
         if self.booted() != "B":
             raise TestFailure(f"booted {self.booted()} after the factory reset, expected B: the reset's restart "
                               "must not count as a failed try")
         record = self.vm.run("cat /boot/efi/factory-reset.log")
+        # keep-network=yes: the command's request, not the one it replaced.
         for want in ("result=done", "keep-network=yes", "slot=B", "other-slot=cleaned", "attempt=1"):
             if want not in record.splitlines():
                 raise TestFailure(f"the record lacks {want!r}:\n{record}")
+        request = next((line for line in record.splitlines() if line.startswith("request=")), "").split("=", 1)[-1]
+        if self.flock:
+            # Gone: the command removed it, and the device enrolled as the
+            # device of -c (below).
+            self.vm.run(f"test ! -e {RESET_WAITING}")
         kept = next((line for line in record.splitlines() if line.startswith("kept=")), "").split("=", 1)[-1].split()
         for want in ("rauc", "network/connections", "ironflockos/proxy.conf"):
             if want not in kept:
@@ -2806,11 +2942,32 @@ class Runner:
         keep_b = "grub-editenv /boot/efi/EFI/BOOT/grubenv list | grep -qx B_TRY=0"
         self.wait_for(keep_b, 300, "slot B, proven before the reset, to be marked good again")
 
-        # The same request put back as it was (content and time): the reset was
-        # completed, so it is not done again, and the device keeps its new
-        # identity.
+        # What ironflock says of the device now: slot B, no failed reset, and
+        # the new device's agent (or none).
+        status = self.snapshot("reset")
+        system, agent = status.get("os") or {}, status.get("agent") or {}
+        if system.get("booted_slot") != "B" or "last_reset" in system:
+            raise TestFailure(f"ironflock status after the factory reset: {system}")
+        if (agent.get("device") != RESET_FLOCK_NAME) if self.flock else agent.get("installed"):
+            raise TestFailure(f"ironflock status after the factory reset: the agent is {agent}")
+
+        # The same request put back as it was (content and time), as when the
+        # IRONFLOCKOS partition could not remove it: the reset was completed, so
+        # it is not done again, and the device keeps its new identity. The
+        # command cannot do this: every request it writes is a new one. The
+        # record names the request by checksum, size and time of change
+        # (factory-reset's request_id); the file is written again with the
+        # content the command wrote and that time.
+        m = re.fullmatch(r"(\d+-\d+)-(\d{8}T\d{6}Z)", request)
+        if not m:
+            raise TestFailure(f"the record names no request by checksum, size and time: {request!r}\n{record}")
+        request_time = calendar.timegm(time.strptime(m.group(2), "%Y%m%dT%H%M%SZ"))
         self.vm.run(f"printf 'keep-network=yes\\n' > /boot/efi/factory-reset.conf"
                     f" && touch -d @{request_time} /boot/efi/factory-reset.conf && sync")
+        again = self.vm.run("echo \"$(cksum </boot/efi/factory-reset.conf | awk '{ print $1 \"-\" $2 }')-"
+                            "$(date -u -r /boot/efi/factory-reset.conf +%Y%m%dT%H%M%SZ)\"").strip()
+        if again != request:
+            raise TestFailure(f"the request put back is {again}, not the one the reset did, {request}")
         self.vm.reboot(self.boot_timeout)
         self.wait_running()
         if self.booted() != "B":
@@ -3060,8 +3217,8 @@ def main():
                     + ", partitions, /data, identity, SSH, RAUC, Docker, fwupd", runner.first_boot)
         runner.step("ironflock: /usr/bin/ironflock, status, refusals, a .flock that is not accepted",
                     runner.ironflock_cli)
-        runner.step("ironflock os as written: rollback refuses, update refuses a catalog IronFlock did not sign",
-                    runner.os_fresh)
+        runner.step("ironflock os as written: rollback refuses, update refuses a catalog IronFlock did not sign, "
+                    "reset refuses a user other than root and a waiting .flock", runner.os_fresh)
         if flock:
             runner.step("change hands: sudo ironflock agent configure -c over SSH by the owner, and back",
                         runner.change_hands)
@@ -3090,8 +3247,8 @@ def main():
         runner.step("GRUB's colour: the splash's background before the kernel, then nothing but it and the splash",
                     runner.grub_splash)
         if args.only != "boot":
-            runner.step("update into slot B; ironflock os refuses while RAUC installs and while the update waits",
-                        runner.update_to_b)
+            runner.step("update into slot B; ironflock os refuses while RAUC installs and while the update waits, "
+                        "os reset also before B is marked good", runner.update_to_b)
             if args.only != "update":
                 # Two restarts more: under emulation (the arm64 runners) each
                 # takes minutes, so there only the refusals run.
@@ -3100,7 +3257,8 @@ def main():
                                 runner.rollback)
                 else:
                     log("--- os rollback back to slot A and forward: left out under emulation")
-                runner.step("factory reset: identity, containers and data gone, network kept, "
+                runner.step("factory reset with ironflock os reset" + (" -c" if flock else "")
+                            + " --keep-network: identity, containers and data gone, network kept, "
                             + ("enrolled anew" if flock else "unenrolled") + ", slot A cleared", runner.factory_reset)
                 runner.step("fallback: an untested slot A falls back to B", runner.fallback)
                 runner.step("os rollback refuses the slot that was tried and not marked good",

@@ -6,12 +6,18 @@ that end in one pull request, one cross-repo change, or one hardware session, ea
 a verifiable acceptance criterion. It is the list to work from; the master plan stays the
 reference for *why*.
 
-Status as of 2026-11-06. Releases: `v0.9.0` (2026-11-04) and `v0.10.0` (2026-11-06,
-the first signed one). Phase 0 is complete. The code of every work package up to Phase 5
+Status as of 2026-11-16. The latest release is `v0.17.0` (2026-11-12), on the `test` and
+the `production` channel. Phase 0 is complete. The code of every work package up to Phase 5
 is written except WP-2.9 (platform firmware inventory). Jetson has its BSP, root tree and
 layout (WP-6.1, WP-6.2), but not yet its A/B backend, images or capsule lane (WP-6.3 to
-WP-6.5). What remains elsewhere is acceptance on real devices, starting with the x86 IPC
-(WP-1.9) that `v1.0.0` (WP-2.10, milestone M3) needs.
+WP-6.5); its CI jobs are switched off until that work continues (#201). What remains
+elsewhere is acceptance on real devices, starting with the x86 IPC (WP-1.9) that `v1.0.0`
+(WP-2.10, milestone M3) needs.
+
+Between `v0.10.0` (2026-11-06) and `v0.17.0`, eight releases carried work that this plan
+did not foresee: it is listed under [Shipped outside the plan](#shipped-outside-the-plan).
+The screen of a device (boot splash, keys, kiosk app) became Phase 8, planned in
+[kiosk-plan.md](kiosk-plan.md).
 
 ## How to use this plan
 
@@ -61,7 +67,7 @@ decision), in progress.
 | 0.3 | Harness skeleton, docs, legacy tag, v0.9.0 | ironflockos | 2 | 0.1 | done |
 | 0.4 | `shell-gate.yml` in the harness | workflows | 2 | | done (#158) |
 | 0.5 | RAUC PKI in Cloud KMS and `docs/signing.md` | GCP, ironflockos | 2 | | done (ceremony 2026-11-05, #167) |
-| 0.6 | Security scan switches from report-only to blocking | ironflockos | 0.5 | 0.3 | done (#181, 2026-11-06; accepted findings in .trivyignore.yaml until 2026-11-17 and 2026-12-06; a planted secret was blocked in #182); open: the first weekly run on `main` in blocking mode, 2026-11-09 |
+| 0.6 | Security scan switches from report-only to blocking | ironflockos | 0.5 | 0.3 | done (#181, 2026-11-06; a planted secret was blocked in #182; the first weekly run on `main` in blocking mode passed on 2026-11-09); accepted findings in .trivyignore.yaml until 2026-12-06 |
 | 1.1 | Build framework and `base` rootfs | ironflockos | 3 | 0.3 | done (#155) |
 | 1.2 | `amd64-efi` target: GRUB, partitions, disk image | ironflockos | 3 | 1.1 | done (#155) |
 | 1.3 | Shared overlay: `/data` redirections, os-release, enroll placeholder | ironflockos | 2 | 1.1 | done (#155) |
@@ -73,9 +79,9 @@ decision), in progress.
 | 1.9 | Hardware acceptance on an x86 IPC; target and testing docs | ironflockos, hardware | 2 | 1.5 | open: needs an x86 IPC |
 | 2.0 | Decisions before Phase 2 (hostname, channels, first firmware lane) | all | 0.5 | | done (ADR-0009) |
 | 2.1 | `ironflock-init bake` | device-init | 2 | 2.0 | done (device-init 1.4.9) |
-| 2.2 | `ironflock-init enroll`, os-release detection, offline tolerance | device-init | 3 | 2.1 | done in device-init 1.4.9; open: the `ironflockos-amd64` target in device-init's e2e, for which an IronFlockOS VM (X.2) can be the test machine |
+| 2.2 | `ironflock-init enroll`, os-release detection, offline tolerance | device-init | 3 | 2.1 | done in device-init 1.4.9; since `v0.16.0` the image carries the `ironflock` command of `ironflock-cli` (device-init's new name) in place of `ironflock-init`, and the CLI's VM test `TestOsInstall` installs IronFlockOS on five VM targets (passed 2026-11-11) |
 | 2.3 | Image provisioning: bake at build, enroll at first boot, agent preinstalled | ironflockos | 2 | 1.5, 2.1, 2.2 | done (#159) |
-| 2.4 | OS update client in the device-agent | device-agent | 5 | 2.0 | done (device-agent #202 in 1.6.0, the catalog key in 1.6.1); the images' only health gate since ironflockos-mark-good went; open: the acceptance, an update N to N+1 by RPC on an image with one rollback, possible once a second release is published |
+| 2.4 | OS update client in the device-agent | device-agent | 5 | 2.0 | done (device-agent #202 in 1.6.0, the catalog key in 1.6.1); the images' only health gate since ironflockos-mark-good went; `ironflock os update` and `os rollback` are tested in QEMU on every pull request (#211); open: the acceptance, an update N to N+1 by RPC on an image with one rollback |
 | 2.5 | Firmware RPCs in the device-agent (fwupd D-Bus) | device-agent | 3 | 1.7 | done in device-agent #201 (read-only, ADR-0009); open: the acceptance, the inventory RPC on an image |
 | 2.6 | `release.yml`: stage, e2e, promote, signed manifest, GitHub Release | ironflockos, GCP | 4 | 1.6, 2.3 | done (#170; catalog key 2026-11-05, trusted by device-agent 1.6.1); first release v0.10.0 on 2026-11-06 |
 | 2.7 | FlockFlasher: signed catalog, variants, `IRONFLOCKOS` targeting | flasher | 4 | 2.6 (manifest shape agreed in 2.0) | done in FlockFlasher v3.0.0 (flasher #25, 2026-11-06); open: the acceptance, a flash from Windows, macOS and Linux that enrolls |
@@ -96,7 +102,7 @@ decision), in progress.
 | 5.5 | Follow-up: Raspberry Pi RT kernel built in CI | ironflockos | 8 | 5.4, 4b.1 | open |
 | 6.1 | BSP decision, download and cache | ironflockos | 2 | | done (#164, ADR-0008 accepted; licence review 2026-11-07, [jetson-licence-review.md](jetson-licence-review.md)) |
 | 6.2 | `jetson-orin` rootfs and layout | ironflockos | 6 | 6.1, 2.3 | done (#171, #173, #174, #177) |
-| 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | open (`system.conf` names the backend; the backend itself is to do) |
+| 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | open (`system.conf` names the backend; the backend itself is to do; the Jetson CI jobs are off since #201 and come back with this package) |
 | 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | open (licence review: a flash kit for users; the package and the SD image published only after WP-6.8 allows it) |
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | open (licence review: NVIDIA's own capsules from `nvidia-l4t-bootloader`) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
@@ -108,15 +114,26 @@ decision), in progress.
 | X.1 | Public install guides per target | website | 1 per target | 2.10, 5.4, 6.6 | open |
 | X.2 | Compute Engine images for virtual devices | ironflockos, GCP, virtual-device-manager | unplanned | 2.6 | done in ironflockos (#187, ADR-0010; first images from `v0.10.1`); open: the virtual-device-manager side, in review |
 | X.3 | Secure Boot with Debian's signed boot chain | ironflockos | unplanned | 1.5, 3.2 | done in ironflockos (ADR-0011; QEMU tests with Secure Boot on); open: a boot with Secure Boot on on the x86 IPC of 1.9 |
+| 8.1 | The splash by default on the EFI targets | ironflockos | 3 | | done in `v0.17.0` (#212) |
+| 8.2 | The usual keys; a console password per device | ironflockos, device-agent, platform | 2 | 8.1 | image side done in `v0.17.0` (#212); open: the device-agent and Studio side that sets the console password |
+| 8.3 | Messages on the splash | ironflockos | 1.5 | 8.1 | done in `v0.17.0` (#212) |
+| 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | done in `v0.17.0` (#212) |
+| 8.5 | The kiosk app | its own repository | own plan | the contract in kiosk-plan.md | open, built outside this repository |
+| 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | open: needs the machine |
+| 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's background colour (#212); open: the proof on the machine (8.6) |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open |
 
 Totals in days as planned: Phase 0 remaining 4.5; Phase 1 20; Phase 2 31.5 across four
 repositories; Phase 3 9; Phase 4 6; Phase 4b 6; Phase 5 15 (+8 follow-up); Phase 6 25
 (+5 follow-up); Phase 7 8.
 
-Remaining on 2026-11-06, open work packages only: Phase 1 2; Phase 2 5, plus the
-acceptances left in 2.2, 2.4, 2.5, 2.7 and 2.8, most of which 2.10 covers; Phase 3 2;
-Phase 4 2; Phase 4b 3; Phase 5 6 (+8 follow-up); Phase 6 17 (+5 follow-up); Phase 7 5.
-Everything marked done above was merged between 2026-11-04 and 2026-11-06.
+Remaining on 2026-11-16, open work packages only: Phase 1 2; Phase 2 5, plus the
+acceptances left in 2.4, 2.5, 2.7 and 2.8, most of which 2.10 covers; Phase 3 2;
+Phase 4 2; Phase 4b 3; Phase 5 6 (+8 follow-up); Phase 6 17 (+5 follow-up); Phase 7 5;
+Phase 8 2.5, plus the kiosk app and the console password's platform side. No planned
+work package closed between 2026-11-06 and 2026-11-16: the releases of those days
+carried Phase 8 and the work listed under
+[Shipped outside the plan](#shipped-outside-the-plan).
 
 ## Dependency graph
 
@@ -737,6 +754,14 @@ Goal and acceptance: see master plan, Phase 7. Milestone M9.
 - Acceptance: a reviewer who did not build IronFlockOS can flash, enroll and update a device
   of each target from the docs alone. Milestone M9.
 
+## Phase 8: The screen
+
+Goal, decisions, the contract with a screen app and the work packages WP-8.1 to WP-8.8:
+[kiosk-plan.md](kiosk-plan.md). `v0.17.0` carries the image side of WP-8.1 to WP-8.4 and
+of WP-8.7. Open are the kiosk app (WP-8.5, its own repository), the acceptance on the
+first machine (WP-8.6), GRUB's picture (WP-8.8), and the device-agent and Studio side of
+the console password.
+
 ## Cross-cutting
 
 ### WP-X.1 Public install guides per target (1 day per target, website)
@@ -769,6 +794,26 @@ factory. With Secure Boot on, the `nvidia` variant's GPU stays unused, and
 - Follow-ups: an update path for the IRONFLOCKOS partition, so revocations of shim or GRUB
   reach devices in the field; IronFlock's own keys with signed unified kernel images
   (master plan, section 8).
+
+### Shipped outside the plan
+
+Work that no work package foresaw, by the release that carried it. Each has its decision
+record or pull request; none has a work package issue.
+
+| Release | Date | What | Record |
+|---------|------|------|--------|
+| `v0.10.1` | 2026-11-06 | Compute Engine images per release (WP-X.2, the ironflockos side) | ADR-0010, #187 |
+| `v0.11.0` | 2026-11-07 | Secure Boot with Debian's signed boot chain (WP-X.3); Docker 29.9.3, Compose 5.7.0, NVIDIA driver 620; security fixes without a waiting period | ADR-0011, #193, #194 |
+| `v0.12.0` | 2026-11-08 | The source code of every release (SOURCES); provenance attested apart from the build (SLSA Build Level 3); release notes for the cloud's system emails; firmware updates on Secure Boot devices | #197, #198, #199, #202 |
+| `v0.13.0` | 2026-11-09 | The OS is named IronFlockOS | ADR-0012, #204, #205 |
+| `v0.14.0` | 2026-11-10 | chrony keeps the time; PTP per device; firmware for Intel graphics and audio | ADR-0013 |
+| `v0.15.0` | 2026-11-11 | Proxy per device; factory reset; network profiles from the boot medium; app data survives OS updates | ADR-0014, ADR-0015, ADR-0016 |
+| `v0.16.0` | 2026-11-11 | Every name is `ironflockos`; the `ironflock` command in the image; the release reuses the images its pull request tested; every test runs before the merge | ADR-0017, ADR-0018, ADR-0019 |
+| `v0.17.0` | 2026-11-12 | A machine panel PC on the stock image (repair at start, AppArmor); the screen (Phase 8); trusted CAs from the boot medium | ADR-0020, ADR-0021, #212 |
+
+Open from these: the acceptance of ADR-0020 on the machine (with WP-8.6), and the
+factory reset's QEMU test through `ironflock os reset`, which joins the QEMU tests with
+this revision of the plan.
 
 ## Keeping this plan honest
 

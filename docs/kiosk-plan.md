@@ -281,14 +281,14 @@ The app guarantees:
 
 | WP | Title | Repo | Days | Depends on | Status |
 |----|-------|------|------|------------|--------|
-| 8.1 | The splash by default on the EFI targets | ironflockos | 3 | | built on `splash`, proof in CI |
-| 8.2 | The usual keys | ironflockos | 2 | 8.1, O1 | built on `splash`, proof in CI |
-| 8.3 | Messages on the splash | ironflockos | 1.5 | 8.1 | built on `splash`, proof in CI |
-| 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | built on `splash`, proof in CI |
+| 8.1 | The splash by default on the EFI targets | ironflockos | 3 | | done in `v0.17.0` (#212) |
+| 8.2 | The usual keys | ironflockos | 2 | 8.1, O1 | image side done in `v0.17.0` (#212); open: the device-agent and Studio side that sets the console password (D8) |
+| 8.3 | Messages on the splash | ironflockos | 1.5 | 8.1 | done in `v0.17.0` (#212) |
+| 8.4 | The device's own splash picture | ironflockos | 2.5 | 8.1 | done in `v0.17.0` (#212) |
 | 8.5 | The kiosk app | its own | own plan | the contract | open |
-| 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | built on `splash` (GRUB's colour only), proof in CI and on the machine (WP-8.6) |
+| 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's colour only (#212); open: the proof on the machine (WP-8.6) |
 | 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | open |
-| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open, after 0.17.0 |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | open |
 
 WP-8.5 needs only the contract, so it starts at once and is tested against the image as
 WP-8.1 and WP-8.4 arrive.
