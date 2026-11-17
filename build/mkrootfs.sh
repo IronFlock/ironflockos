@@ -129,7 +129,7 @@ if [ "$BOOTLOADER" = tegra ]; then
     echo "Components: main"
     echo "Architectures: $ARCH"
     echo "Signed-By:"
-    # the key block only: NVIDIA's file starts with a licence header
+    # the key block only, whatever the file holds around it
     sed -n '/^-----BEGIN PGP PUBLIC KEY BLOCK-----$/,/^-----END PGP PUBLIC KEY BLOCK-----$/p' \
       "$src/targets/$TARGET/apt/jetson-ota-public.asc" | sed -e 's/^$/./' -e 's/^/ /'
   } >"$sources/nvidia-l4t.sources"
