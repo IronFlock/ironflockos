@@ -136,6 +136,7 @@ lsb=$root/etc/lsb-release
 check "lsb-release: IronFlockOS, based on Ubuntu 24.04; release and codename Ubuntu's" \
   bash -c "grep -qx DISTRIB_ID=IronFlockOS '$lsb' && grep -qx DISTRIB_RELEASE=24.04 '$lsb' && grep -qE '^DISTRIB_DESCRIPTION=\"IronFlockOS [^\"]+, based on Ubuntu 24.04\"\$' '$lsb'"
 check "no Ubuntu legal notice at the first login (/etc/legal)" test ! -e "$root/etc/legal"
+check "no Ubuntu logo (base-files' /usr/share/pixmaps/ubuntu-logo*)" bash -c "! compgen -G '$root/usr/share/pixmaps/ubuntu-logo*'"
 check "no login banner script names Ubuntu or Canonical (/etc/update-motd.d)" \
   bash -c "! grep -rqiE 'ubuntu|canonical' '$root/etc/update-motd.d'"
 check "nothing fetches motd.ubuntu.com, and motd-news is masked" \

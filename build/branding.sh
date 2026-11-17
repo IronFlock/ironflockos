@@ -42,6 +42,9 @@ rm -f "$root/etc/legal"
 # bring those). The overlay's /etc/motd is the banner.
 rm -f "$root/etc/update-motd.d/00-header" "$root/etc/update-motd.d/10-help-text" \
   "$root/etc/update-motd.d/50-motd-news" "$root/etc/default/motd-news"
+# Ubuntu's logos, which base-files puts into /usr/share/pixmaps for desktops;
+# nothing in the image shows them.
+rm -f "$root"/usr/share/pixmaps/ubuntu-logo*
 
 # What a person sees at the login prompt and after it names no distribution.
 for f in etc/issue etc/issue.net; do

@@ -27,6 +27,8 @@ ubuntu_tree() {
   printf '#!/bin/sh\n[ -n "$URLS" ] || URLS="https://motd.ubuntu.com"\n' >"$r/etc/update-motd.d/50-motd-news"
   printf 'ENABLED=1\nURLS="https://motd.ubuntu.com"\n' >"$r/etc/default/motd-news"
   printf 'Vendor: Ubuntu\nVendor-URL: https://www.ubuntu.com/\n' >"$r/etc/dpkg/origins/ubuntu"
+  mkdir -p "$r/usr/share/pixmaps"
+  for f in ubuntu-logo.svg ubuntu-logo-text.png ubuntu-logo-text-dark.png python3.12.xpm; do : >"$r/usr/share/pixmaps/$f"; done
 }
 
 @test "the overlay's login prompt names IronFlockOS through os-release, keeps the host and the terminal, and names no distribution" {
@@ -36,7 +38,7 @@ ubuntu_tree() {
   ! grep -qiE 'ubuntu|debian' "$repo/overlay/etc/issue" "$repo/overlay/etc/issue.net" "$repo/overlay/etc/motd"
 }
 
-@test "an Ubuntu tree: lsb-release names IronFlockOS based on Ubuntu, keeps release and codename; no legal notice, no Ubuntu banner, no motd-news" {
+@test "an Ubuntu tree: lsb-release names IronFlockOS based on Ubuntu, keeps release and codename; no legal notice, Ubuntu banner, motd-news or logo" {
   ubuntu_tree
   printf '#!/bin/sh\nuname -snrvm\n' >"$r/etc/update-motd.d/10-uname"
   run bash "$branding" "$r" 1.2.3
@@ -47,6 +49,7 @@ ubuntu_tree() {
   [ ! -e "$r/etc/update-motd.d/10-help-text" ]
   [ ! -e "$r/etc/update-motd.d/50-motd-news" ]
   [ ! -e "$r/etc/default/motd-news" ]
+  [ "$(ls "$r/usr/share/pixmaps")" = python3.12.xpm ]
   [ -z "$(grep -rl 'motd.ubuntu.com' "$r/etc")" ]
   # Other banner scripts and the technical references stay.
   [ -f "$r/etc/update-motd.d/10-uname" ]
