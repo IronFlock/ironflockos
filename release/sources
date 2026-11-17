@@ -1,12 +1,19 @@
-# The source packages of the images that are in neither Debian nor the
-# Raspberry Pi archive (build/sources.sh, docs/release.md "Source code"):
-# their vendors' repositories have no source packages. One per line, the
-# source package (dpkg-query's source:Package), then
+# The source packages of the images that are in neither Debian, the
+# Raspberry Pi archive nor Ubuntu's (build/sources.sh, docs/release.md
+# "Source code"): their vendors' repositories have no source packages. One
+# per line, the source package (dpkg-query's source:Package), then
 #   upstream URL   its source is the upstream tarball at URL ({upstream}:
 #                  the version without epoch and Debian revision), which
 #                  the release publishes like a Debian source package
+#   l4t NAME       its source is the file targets/jetson-orin/bsp.conf pins
+#                  as NAME_URL, NAME_SHA256 and NAME_FILE, for the versions
+#                  NAME_VERSION names; a Jetson release mirrors it to
+#                  ironflockos/sources/l4t-<L4T_VERSION>/. Another version
+#                  of the source takes its other line, and fails without one
 #   none REASON    no source is published; SOURCES gives the reason. Only
 #                  for software under no copyleft licence.
+#   open REASON    not decided yet: fails the release (and a release with
+#                  Jetson files at its start, build/jetson-release.sh check)
 # A source package that is in neither the archives nor this list fails the
 # release, so a new repository gets a decision here first.
 
@@ -29,3 +36,41 @@ nvidia-modprobe           upstream https://github.com/NVIDIA/nvidia-modprobe/arc
 # The open kernel modules the build makes from nvidia-kernel-open-dkms
 # (build/nvidia-modules.sh): MIT, the linked modules MIT/GPL-2.0.
 ironflockos-nvidia-modules    upstream https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/{upstream}.tar.gz
+
+# NVIDIA's L4T repositories of Jetson Linux r39.2.1 (targets/jetson-orin):
+# each nvidia-l4t-* package is a source package of its own, without source
+# in the repositories. Under the NVIDIA Driver License Agreement, with the
+# open source parts their copyright files list
+# (docs/jetson-licence-review.md). The GPL parts (the kernel and its
+# modules, the device trees, nvgpu, the display driver) and the boot
+# firmware (FreeRTOS in the SPE firmware; OP-TEE and TF-A, BSD) have their
+# source in NVIDIA's public_sources.tbz2 of the release.
+nvidia-l4t-kernel                 l4t L4T_SOURCES
+nvidia-l4t-kernel-nvgpu           l4t L4T_SOURCES
+nvidia-l4t-kernel-oot-modules     l4t L4T_SOURCES
+nvidia-l4t-kernel-dtbs            l4t L4T_SOURCES
+nvidia-l4t-display-kernel         l4t L4T_SOURCES
+nvidia-l4t-bootloader             l4t L4T_SOURCES
+nvidia-l4t-bootloader-utils       none NVIDIA Driver License Agreement; nvbootctrl's open parts Apache-2.0: binaries only
+nvidia-l4t-core                   none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-cuda                   none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-cuda-nvgpu             none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-firmware               none NVIDIA Driver License Agreement, Realtek's firmware licence, NVDLA Apache-2.0 and MIT: binaries only
+nvidia-l4t-firmware-nvgpu         none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-init                   none NVIDIA Driver License Agreement; configuration files MIT
+nvidia-l4t-init-nvgpu             none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-kernel-module-configs  none NVIDIA Driver License Agreement: modprobe configuration only
+nvidia-l4t-nvfancontrol           none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-nvml                   none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-nvpmodel               none NVIDIA Driver License Agreement: binaries only
+nvidia-l4t-tools                  none NVIDIA Driver License Agreement; tipc_test Apache-2.0: binaries only
+# NVIDIA's initrd (/boot/initrd, which L4TLauncher boots) carries programs
+# of Ubuntu 24.04 under the GPL and LGPL (BusyBox 1:1.36.1-6ubuntu3.1, bash,
+# coreutils, util-linux, e2fsprogs, kmod, nfs-utils, the ISC DHCP client,
+# glibc and others), copied from Ubuntu's packages without a list of their
+# versions; public_sources.tbz2 does not hold them.
+nvidia-l4t-initrd                 open Ubuntu programs under the GPL and LGPL whose source package versions NVIDIA does not name
+# The container toolkit of JetPack 7.2.1 from NVIDIA's common repository
+# (libnvidia-container 1.19.1, with LGPL-3.0 parts): the tag's source.
+# Other versions (the nvidia variant's) take the line above.
+libnvidia-container               l4t LIBNVIDIA_CONTAINER_SOURCE

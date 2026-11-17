@@ -91,5 +91,5 @@ docker run --rm \
   bash -c 'set -e
     timeout -k 30s 5m apt-get -qq -o Acquire::Retries=5 update
     timeout -k 30s 5m apt-get -qq -y -o Acquire::Retries=5 install --no-install-recommends \
-      rauc openssl e2fsprogs fdisk jq >/dev/null
+      rauc openssl e2fsprogs fdisk jq zstd >/dev/null
     exec bash /src/build/verify-bundles.sh "$1" /out' verify "$mode"

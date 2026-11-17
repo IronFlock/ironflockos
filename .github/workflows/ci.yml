@@ -193,12 +193,15 @@ jobs:
   # built on the arm64 runner (slot A's filesystem image and the RAUC bundle,
   # signed and verified as on the other targets; NVIDIA's flash tools write
   # the disk) and its tree checked there in a chroot, the RAUC backend over
-  # nvbootctrl and its health gate included. Not in build.yml's matrix: no
-  # Jetson image is released before the licence sign-off (ADR-0008, WP-6.8).
+  # nvbootctrl and its health gate included. build.yml builds it for a
+  # release only while the repository variable JETSON_RELEASE is true
+  # (docs/release.md, "Jetson").
   #
   # Runs only when the repository variable JETSON_CI is true (#201 switched
-  # it off, WP-6.3 back on). Both jobs are in ci-ok's `needs`, which counts a
-  # skipped job as failed: with JETSON_CI unset no pull request gets ci-ok.
+  # it off, WP-6.3 back on). The Jetson jobs are in ci-ok's `needs`, which
+  # counts a skipped job as failed: with JETSON_CI unset no pull request gets
+  # ci-ok. The release takes Jetson files only while JETSON_RELEASE is true
+  # (build.yml), which is not JETSON_CI.
   jetson-rootfs:
     if: vars.JETSON_CI == 'true'
     runs-on: ubuntu-24.04-arm
@@ -233,6 +236,11 @@ jobs:
         env:
           IRONFLOCKOS_WORK: /mnt/ironflockos-work
         run: just build jetson-orin base
+      # What a release publishes next to the image (docs/release.md, "Jetson").
+      - name: NVIDIA's Agreement and the flash kit
+        env:
+          IRONFLOCKOS_BUILD_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: build/jetson-release.sh files out/ironflockos-jetson-orin-base "$(tr -d '[:space:]' < VERSION)"
       # With the bundle: it carries the boot firmware lane's files (WP-6.5).
       - name: jetson-rootfs-check
         run: |
@@ -329,6 +337,43 @@ jobs:
           sudo cat /mnt/kit-work/Linux_for_Tegra/rootfs/etc/nv_boot_control.conf 2>/dev/null || true
           df -h / /mnt
 
+  # The Jetson release path without publishing anything and without the
+  # switch (docs/release.md, "Jetson"): the code a release with
+  # JETSON_RELEASE true runs, in its dry mode, on this run's Jetson image:
+  # what stage would publish (the slot image, the bundle, the flash kit,
+  # NVIDIA's Agreement as pinned, SHA256SUMS), the release notes rule, the
+  # catalog it would write (signed with a throwaway key), and the source
+  # mirror (Ubuntu's source packages with apt, NVIDIA's sources as
+  # release/sources decides them), against the FreeRTOS statement in the
+  # slot image (test/image/jetson-release-check.sh). Open source decisions
+  # are allowed here and reported; a release refuses them.
+  jetson-release:
+    needs: [jetson-rootfs]
+    if: vars.JETSON_CI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/catalog/go.mod
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-jetson-orin-base
+          path: out/ironflockos-jetson-orin-base
+      - name: the Jetson release, dry run
+        env:
+          IRONFLOCKOS_WORK: /mnt/ironflockos-jetson-release
+        run: |
+          sudo mkdir -p "$IRONFLOCKOS_WORK"
+          sudo chown "$(id -u):$(id -g)" "$IRONFLOCKOS_WORK"
+          test/image/jetson-release-check.sh out "$(tr -d '[:space:]' < VERSION)" | tee -a "$GITHUB_STEP_SUMMARY"
+
   workflows:
     uses: IronFlock/workflows/.github/workflows/workflows-lint.yml@v1
 
@@ -381,6 +426,7 @@ jobs:
       - rpi-check
       - jetson-rootfs
       - jetson-flash
+      - jetson-release
       - workflows
       - intent
       - release-build

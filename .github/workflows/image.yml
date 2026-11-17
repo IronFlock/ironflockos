@@ -83,6 +83,18 @@ jobs:
         env:
           IRONFLOCKOS_WORK: /mnt/ironflockos-work
         run: just build "$TARGET" "$VARIANT" "$KERNEL"
+      # Jetson (build.yml's jetson job, only while JETSON_RELEASE is true): the
+      # tree checked as on every pull request (jetson-rootfs in ci.yml), then
+      # NVIDIA's Agreement from NVIDIA and the flash kit next to the image
+      # (build/jetson-release.sh files, docs/release.md "Jetson").
+      - name: jetson-rootfs-check (jetson-orin)
+        if: inputs.target == 'jetson-orin'
+        run: |
+          bundles=(out/ironflockos-$TARGET-$VARIANT$SUFFIX/*.raucb)
+          sudo test/image/jetson-rootfs-check.sh "/mnt/ironflockos-work/ironflockos-$TARGET-$VARIANT$SUFFIX/rootfs" "${bundles[0]}"
+      - name: NVIDIA's Agreement and the flash kit (jetson-orin)
+        if: inputs.target == 'jetson-orin'
+        run: build/jetson-release.sh files "out/ironflockos-$TARGET-$VARIANT$SUFFIX" "$(tr -d '[:space:]' < VERSION)"
       # The release's SBOM of the image (CycloneDX, from the tree the build
       # left in its scratch space), published with it.
       - name: SBOM of the image (release builds)

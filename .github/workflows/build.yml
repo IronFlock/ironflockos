@@ -76,6 +76,27 @@ jobs:
       signing: ${{ inputs.signing }}
       prefix: ${{ inputs.prefix }}
 
+  # jetson-orin (ADR-0008, docs/release.md "Jetson"): slot A's filesystem
+  # image, the bundle, NVIDIA's Agreement and the flash kit, on the arm64
+  # runner. Only while the repository variable JETSON_RELEASE is true, which
+  # is set for the release that first publishes Jetson files; unset, every
+  # release is what it was without it (test/unit/jetson-release.bats).
+  # RELEASE_IMAGES gets jetson-orin-base the same way (release_images in
+  # build/lib.sh).
+  jetson:
+    name: image (jetson-orin, base)
+    if: vars.JETSON_RELEASE == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image.yml
+    with:
+      target: jetson-orin
+      variant: base
+      kernel: std
+      runner: ubuntu-24.04-arm
+      signing: ${{ inputs.signing }}
+      prefix: ${{ inputs.prefix }}
+
   # The installer sticks of the EFI targets, each carrying every variant of its
   # target built above (INSTALLER_PAYLOADS in target.conf); installer.conf on
   # the stick picks the one to install.

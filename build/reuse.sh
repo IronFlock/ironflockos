@@ -33,6 +33,10 @@ here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=build/lib.sh
 . "$here/lib.sh"
 load_conf "$here/release.conf"
+# The release's images, the Jetson images among them while JETSON_RELEASE is
+# true (release_images in build/lib.sh).
+RELEASE_IMAGES=$(release_images | tr '\n' ' ')
+RELEASE_IMAGES=${RELEASE_IMAGES% }
 
 # The signer of the manifest's attestation: the harness's attest-provenance
 # workflow at the tag release.yml calls.
