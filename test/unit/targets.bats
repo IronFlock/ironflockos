@@ -10,13 +10,15 @@ setup() {
   . "$repo/build/lib.sh"
 }
 
-@test "amd64-efi and arm64-efi render grub.cfg, system.conf and repart.d" {
+@test "amd64-efi and arm64-efi render the boot script, its loader, system.conf and repart.d" {
   for t in amd64-efi arm64-efi; do
     (
       load_conf "$repo/targets/$t/target.conf"
-      out=$(render "$repo/targets/$t/grub/grub.cfg")
-      [[ "$out" != *"@"*"@"* ]]
-      [[ "$out" == *"$CONSOLE_CMDLINE"* ]]
+      for f in boot.cfg loader.cfg; do
+        out=$(render "$repo/targets/$t/grub/$f")
+        [[ "$out" != *"@"*"@"* ]]
+        [[ "$out" == *"$CONSOLE_CMDLINE"* ]]
+      done
       COMPATIBLE=ironflockos-$t-base render "$repo/targets/$t/system.conf" | grep -qx "compatible=ironflockos-$t-base"
       for f in "$repo/targets/$t"/repart.d/*.conf; do
         SLOT_SIZE=$(size_bytes "$SLOT_SIZE_BASE") ESP_SIZE=$(size_bytes "$ESP_SIZE") render "$f" >/dev/null
@@ -34,7 +36,7 @@ setup() {
 }
 
 @test "arm64-efi shares amd64-efi's A/B files" {
-  for f in grub/grub.cfg system.conf genimage.cfg repart.d; do
+  for f in grub/boot.cfg grub/loader.cfg system.conf genimage.cfg repart.d; do
     [ "$(readlink -f "$repo/targets/arm64-efi/$f")" = "$(readlink -f "$repo/targets/amd64-efi/$f")" ]
   done
 }
@@ -70,7 +72,7 @@ setup() {
   [ "$(load_conf "$repo/targets/arm64-efi/target.conf" && echo "$EFI_ARCH $GRUB_FORMAT")" = "aa64 arm64-efi" ]
 }
 
-@test "the disk image boots shim and Debian's GRUB, which finds the A/B script" {
+@test "the disk image boots shim and Debian's GRUB, which finds the loader at both of its paths and the A/B script" {
   img=$repo/build/mkimage.sh
   # shim at the removable-media path, GRUB and MokManager next to it, from
   # the image's packages; no GRUB of the build's own, no shim fallback.
@@ -81,17 +83,25 @@ setup() {
   ! grep -q 'grub-mkimage\|fb\$EFI_ARCH' "$img"
   ! read_list "$repo/build/builder-packages" "$repo/build/builder-packages.amd64" "$repo/build/builder-packages.arm64" | grep -q '^grub-efi-'
   # Debian's GRUB reads /EFI/BOOT/grub.cfg next to itself first, else
-  # /EFI/debian/grub.cfg, which sources it. Either way its ${prefix} is
-  # /EFI/debian: the A/B script points it at /EFI/BOOT before it touches
-  # grubenv, RAUC's file.
-  stub=$(sed -n "/^cat >\"\$esp_dir\/EFI\/debian\/grub.cfg\" <<'CFG'$/,/^CFG$/p" "$img")
-  [[ "$stub" == *$'\nsource ($root)/EFI/BOOT/grub.cfg\nCFG' ]]
+  # /EFI/debian/grub.cfg: both are the loader (ADR-0022), the slot's own
+  # copy, and boot.cfg next to it the slot's script. Either way GRUB's
+  # ${prefix} is /EFI/debian: the loader and the script point it at
+  # /EFI/BOOT before they touch grubenv, RAUC's file.
+  grep -q 'boot_files=$ROOT/usr/lib/ironflockos/boot$' "$img"
+  grep -q 'install -m 0644 "$boot_files/loader.cfg" "$esp_dir/EFI/BOOT/grub.cfg"$' "$img"
+  grep -q 'install -m 0644 "$boot_files/loader.cfg" "$esp_dir/EFI/debian/grub.cfg"$' "$img"
+  grep -q 'install -m 0644 "$boot_files/boot.cfg" "$esp_dir/EFI/BOOT/boot.cfg"$' "$img"
+  grep -q '"$esp_dir/EFI/BOOT/grub.cfg" "$esp_dir/EFI/BOOT/boot.cfg" "$esp_dir/EFI/BOOT/grubenv"' "$img"
+  grep -q 'mcopy -i "$esp" -m "$esp_dir/EFI/debian/grub.cfg" ::/EFI/debian/$' "$img"
+  grep -q 'render "$target_dir/grub/$f" >"$ROOT/usr/lib/ironflockos/boot/$f"' "$repo/build/customize.sh"
   load_conf "$repo/targets/amd64-efi/target.conf"
   COMPATIBLE=x render "$repo/targets/amd64-efi/system.conf" | grep -qx 'grubenv=/boot/efi/EFI/BOOT/grubenv'
-  script=$(render "$repo/targets/amd64-efi/grub/grub.cfg" | grep -v '^#')
-  first_prefix_use=$(echo "$script" | grep -n 'prefix' | head -n 1)
-  [[ "$first_prefix_use" == *":set prefix=(\$root)/EFI/BOOT" ]]
-  echo "$script" | grep -qx 'load_env --file ${prefix}/grubenv'
+  for f in loader.cfg boot.cfg; do
+    script=$(render "$repo/targets/amd64-efi/grub/$f" | grep -v '^ *#')
+    first_prefix_use=$(echo "$script" | grep -n 'prefix' | head -n 1)
+    [[ "$first_prefix_use" == *":set prefix=(\$root)/EFI/BOOT" ]]
+    echo "$script" | grep -q '^load_env --file ${prefix}/grubenv'
+  done
 }
 
 @test "the rt kernel is offered for base on the EFI targets only" {
@@ -104,7 +114,7 @@ setup() {
 
 @test "GRUB's console and serial terminal are the one GRUB_SERIAL makes" {
   for t in amd64-efi arm64-efi; do
-    out=$(load_conf "$repo/targets/$t/target.conf" && render "$repo/targets/$t/grub/grub.cfg")
+    out=$(load_conf "$repo/targets/$t/target.conf" && render "$repo/targets/$t/grub/boot.cfg")
     terminal=$(load_conf "$repo/targets/$t/target.conf" && echo "$GRUB_TERMINAL")
     echo "$out" | grep -qx "terminal_input console $terminal"
     echo "$out" | grep -qx "terminal_output console $terminal"

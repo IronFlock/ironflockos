@@ -218,7 +218,14 @@ else
   echo "framebuffer: not available: no /dev/fb0 with its geometry"
 fi
 echo "splash and console parameters: $(tr ' ' '\n' <<<"$cmdline" | grep -E '^(quiet|splash|plymouth\.|vt\.|fbcon=|console=|loglevel=|video=|i915\.|ironflockos\.)' | tr '\n' ' ')"
-echo "grub.cfg: $(grep -q splash.env "$esp/grub.cfg" 2>/dev/null && echo "with the splash" || echo "without the splash (installed before 0.17.0, or not readable)")"
+# The boot script in use: boot.cfg next to the loader (ADR-0022), or the
+# whole grub.cfg of a device installed with 0.17.0 or before that has not
+# changed over yet.
+script=$esp/boot.cfg
+[ -f "$script" ] || script=$esp/grub.cfg
+sname=${script##*/}
+echo "boot script ($sname): $(grep -q splash.env "$script" 2>/dev/null && echo "with the splash" || echo "without the splash (installed before 0.17.0, or not readable)")"
+echo "  ironflockos-boot-script: $(grep -v '^#' "$root/run/ironflockos/boot-script" 2>/dev/null | tr '\n' ' ')"
 echo "grubenv: $(grub-editenv "$esp/grubenv" list 2>/dev/null | grep -E '^IRONFLOCKOS_(BOOT|CMDLINE)=' | tr '\n' ' ')"
 echo "splash.env, GRUB's colour: $(grub-editenv "$esp/splash.env" list 2>/dev/null | tr '\n' ' ')"
 echo "splash.cpio: $([ -f "$esp/splash.cpio" ] && echo "$(wc -c <"$esp/splash.cpio" | tr -d ' ') bytes: $(cpio -it --quiet <"$esp/splash.cpio" 2>/dev/null | sed 's|.*/||' | tr '\n' ' ')" || echo "none (IronFlock's logo on black)")"
@@ -346,7 +353,7 @@ pwfile="the file: ${pwmode:-none}${pwuid:+, uid $pwuid}"
 if [ -n "$kind" ]; then echo "console password: $user's password is $kind; $pwfile"; else echo "console password: not available: no enrolled user (installed.json); $pwfile"; fi
 echo "  ironflockos-console-password: $(prop ironflockos-console-password.service Result); $(journal -b -u ironflockos-console-password.service | grep '^console-password:' | tail -n 1)"
 for e in "Start with messages" "Firmware setup"; do
-  echo "boot menu \"$e\": $(grep -q "menuentry \"$e\"" "$esp/grub.cfg" 2>/dev/null && echo "in grub.cfg" || echo "not in grub.cfg")"
+  echo "boot menu \"$e\": $(grep -q "menuentry \"$e\"" "$script" 2>/dev/null && echo "in $sname" || echo "not in $sname")"
 done
 ind=$(od -An -v -tx1 -j 4 -N 1 "$root"/sys/firmware/efi/efivars/OsIndicationsSupported-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | tr -d ' \n')
 if [ -n "$ind" ]; then

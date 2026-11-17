@@ -31,11 +31,14 @@ defaults:
 jobs:
   # lint and unit tests through the shared shell gate (tools from the
   # harness tools.lock). Its build job is skipped: the image build below
-  # hands its output to the image tests.
+  # hands its output to the image tests. grub-common brings
+  # grub-script-check, which the unit tests run on the boot script, its
+  # loader and 0.17.0's script (test/unit/boot-script.bats).
   gate:
     uses: IronFlock/workflows/.github/workflows/shell-gate.yml@v1
     with:
       skip: build
+      apt-packages: grub-common
 
   # The Go tools (tools/rauc-pki, the RAUC PKI; tools/catalog, the release
   # catalog): the shell gate has no Go.

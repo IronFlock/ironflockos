@@ -357,7 +357,7 @@ display() {
 @test "GRUB: the splash by default; boot=text, or ironflockos.boot=text on the command line, boots as before" {
   . "$repo/build/lib.sh"
   load_conf "$repo/targets/amd64-efi/target.conf"
-  cfg=$(render "$repo/targets/amd64-efi/grub/grub.cfg")
+  cfg=$(render "$repo/targets/amd64-efi/grub/boot.cfg")
   echo "$cfg" | grep -qx 'set IRONFLOCKOS_BOOT=splash'
   # The default comes before grubenv, which may name text.
   [ "$(echo "$cfg" | grep -n 'set IRONFLOCKOS_BOOT=splash' | cut -d: -f1)" -lt "$(echo "$cfg" | grep -n '^load_env' | cut -d: -f1)" ]
@@ -555,7 +555,7 @@ $yescrypt" '!locked' "$yescrypt:0:0"; do
 @test "GRUB's menu: the slot, its fallback, one start with messages, the firmware's setup" {
   . "$repo/build/lib.sh"
   load_conf "$repo/targets/amd64-efi/target.conf"
-  cfg=$(render "$repo/targets/amd64-efi/grub/grub.cfg" | grep -v '^ *#')
+  cfg=$(render "$repo/targets/amd64-efi/grub/boot.cfg" | grep -v '^ *#')
   [ "$(echo "$cfg" | grep -o 'menuentry "[^"]*"' | tr '\n' '|')" = 'menuentry "IronFlockOS slot ${slot}"|menuentry "IronFlockOS slot ${other} (fallback)"|menuentry "Start with messages"|menuentry "Firmware setup"|' ]
   echo "$cfg" | grep -qx 'set default=0'
   echo "$cfg" | grep -qx '    set fallback=1'
@@ -639,7 +639,7 @@ SH
 @test "GRUB fills the screen with the splash's colour from splash.env, draws no picture, and keeps the mode for the kernel" {
   . "$repo/build/lib.sh"
   for t in amd64-efi arm64-efi; do
-    cfg=$(load_conf "$repo/targets/$t/target.conf" && render "$repo/targets/$t/grub/grub.cfg" | grep -v '^ *#')
+    cfg=$(load_conf "$repo/targets/$t/target.conf" && render "$repo/targets/$t/grub/boot.cfg" | grep -v '^ *#')
     terminal=$(load_conf "$repo/targets/$t/target.conf" && echo "$GRUB_TERMINAL")
     block=$(echo "$cfg" | sed -n '/^if \[ "${splash}" = yes \]; then$/,/^else$/p')
     [[ "$block" == *"load_env --file \${prefix}/splash.env --skip-sig IRONFLOCKOS_SPLASH_BACKGROUND"* ]]

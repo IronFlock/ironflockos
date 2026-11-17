@@ -95,6 +95,14 @@ case "$BOOTLOADER" in
     # kernel's graphics drivers make it larger (docs/build.md, "The screen").
     [ -s "$ROOT/usr/share/plymouth/themes/ironflockos/ironflock.png" ] || die "the splash's theme is not in the tree"
     log "initramfs: $(du -h --apparent-size "$ROOT/boot/initrd.img-$kver" | cut -f1)"
+    # --- the boot script and its loader, in the slot (ADR-0022) -----------
+    # build/mkimage.sh puts them on the IRONFLOCKOS partition of a new
+    # installation; ironflockos-boot-script brings a newer one there from a
+    # slot an update wrote.
+    mkdir -p "$ROOT/usr/lib/ironflockos/boot"
+    for f in loader.cfg boot.cfg; do
+      render "$target_dir/grub/$f" >"$ROOT/usr/lib/ironflockos/boot/$f"
+    done
     ;;
   rpi)
     # --- the Pi firmware's boot files (build/mkimage-rpi.sh makes boot-a) --
@@ -225,6 +233,10 @@ else
   fi
   if [ "$BOOTLOADER" = grub-efi ]; then
     systemctl --root="$ROOT" enable ironflockos-slot-proven.path ironflockos-slot-keep.timer
+    # The boot script on the IRONFLOCKOS partition (ADR-0022): checked at
+    # every boot, renewed through the two units above once the slot is
+    # proven.
+    systemctl --root="$ROOT" enable ironflockos-boot-script.service
     # The screen (docs/build.md): the device's own splash picture and its
     # display setting, both for GRUB next to grubenv. The EFI targets only
     # (docs/kiosk-plan.md, P5).

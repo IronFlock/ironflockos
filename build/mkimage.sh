@@ -36,19 +36,21 @@ done
 install -m 0644 "$shim" "$esp_dir/EFI/BOOT/$EFI_LOADER"
 install -m 0644 "$mok_manager" "$esp_dir/EFI/BOOT/mm$EFI_ARCH.efi"
 install -m 0644 "$grub" "$esp_dir/EFI/BOOT/grub$EFI_ARCH.efi"
-# Debian's signed GRUB has its modules built in. It reads the A/B script
-# next to itself (/EFI/BOOT/grub.cfg, Debian's fw_path patch) before
-# /EFI/debian/grub.cfg (its built-in prefix); that file sources the same
-# script, for a GRUB without the patch. The script and grubenv stay in
-# /EFI/BOOT, where RAUC's system.conf, rt-tuning and the devices flashed
-# before ADR-0011 have them.
-cat >"$esp_dir/EFI/debian/grub.cfg" <<'CFG'
-# IronFlockOS: the A/B script is in /EFI/BOOT, next to the boot loader. Debian's
-# GRUB reads it there first; this file is for a GRUB that reads only its
-# prefix, /EFI/debian.
-source ($root)/EFI/BOOT/grub.cfg
-CFG
-render "$target_dir/grub/grub.cfg" >"$esp_dir/EFI/BOOT/grub.cfg"
+# Debian's signed GRUB has its modules built in. It reads grub.cfg next to
+# itself (/EFI/BOOT/grub.cfg, Debian's fw_path patch) and, only when that
+# cannot be opened, /EFI/debian/grub.cfg (its built-in prefix). Both are the
+# loader (ADR-0022), which runs the A/B script boot.cfg next to it: the
+# slot's own copies, which build/customize.sh rendered, so that
+# ironflockos-boot-script finds on the partition what the slot carries.
+# The scripts and grubenv stay in /EFI/BOOT, where RAUC's system.conf,
+# rt-tuning and the devices flashed before ADR-0011 have them.
+boot_files=$ROOT/usr/lib/ironflockos/boot
+for f in loader.cfg boot.cfg; do
+  [ -s "$boot_files/$f" ] || die "the tree has no /usr/lib/ironflockos/boot/$f (build/customize.sh)"
+done
+install -m 0644 "$boot_files/loader.cfg" "$esp_dir/EFI/BOOT/grub.cfg"
+install -m 0644 "$boot_files/loader.cfg" "$esp_dir/EFI/debian/grub.cfg"
+install -m 0644 "$boot_files/boot.cfg" "$esp_dir/EFI/BOOT/boot.cfg"
 grub-editenv "$esp_dir/EFI/BOOT/grubenv" create
 grub-editenv "$esp_dir/EFI/BOOT/grubenv" set "ORDER=A B" A_OK=1 A_TRY=0 B_OK=0 B_TRY=0 IRONFLOCKOS_CMDLINE=
 # The installer talks to the person at the screen: it boots on text, as
@@ -82,7 +84,7 @@ export MTOOLS_SKIP_CHECK=1
 mmd -i "$esp" ::/EFI ::/EFI/BOOT ::/EFI/debian
 mcopy -i "$esp" -m "$esp_dir/README.txt" ::/README.txt
 mcopy -i "$esp" -m "$esp_dir/EFI/BOOT/$EFI_LOADER" "$esp_dir/EFI/BOOT/mm$EFI_ARCH.efi" "$esp_dir/EFI/BOOT/grub$EFI_ARCH.efi" \
-  "$esp_dir/EFI/BOOT/grub.cfg" "$esp_dir/EFI/BOOT/grubenv" "$esp_dir/EFI/BOOT/splash.env" ::/EFI/BOOT/
+  "$esp_dir/EFI/BOOT/grub.cfg" "$esp_dir/EFI/BOOT/boot.cfg" "$esp_dir/EFI/BOOT/grubenv" "$esp_dir/EFI/BOOT/splash.env" ::/EFI/BOOT/
 mcopy -i "$esp" -m "$esp_dir/EFI/debian/grub.cfg" ::/EFI/debian/
 
 # --- slot A: ext4 of the full slot size from the tree ----------------------

@@ -1,0 +1,16 @@
+# The boot script on the IRONFLOCKOS partition at every boot (ADR-0022): a
+# loader that is missing or damaged is put back before the next restart
+# needs it, a trial that failed is recorded, a confirmed one finished. The
+# change-over and a new trial wait for the slot's proof
+# (ironflockos-slot-proven, ironflockos-slot-keep).
+[Unit]
+Description=IronFlockOS: check the boot script on the IRONFLOCKOS partition
+ConditionPathIsDirectory=/boot/efi/EFI/BOOT
+After=boot-efi.mount
+
+[Service]
+Type=oneshot
+ExecStart=-/usr/lib/ironflockos/boot-script boot
+
+[Install]
+WantedBy=multi-user.target

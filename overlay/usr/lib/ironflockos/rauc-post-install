@@ -9,7 +9,8 @@
 #   (WP-6.2), as the bundle's names slot A, the slot keeps the module's
 #   /etc/nv_boot_control.conf, and tegra-capsule stages NVIDIA's boot
 #   firmware capsule when the slot needs firmware its boot chain lacks, or
-#   refuses the slot when that cannot be done (WP-6.5);
+#   refuses the slot when that cannot be done (WP-6.5); on the EFI targets a
+#   boot script staged for a trial is cancelled (ADR-0022);
 # - a Raspberry Pi boot partition (class boot, WP-5.2) gets a cmdline.txt
 #   that mounts its own root slot: the bundle's names slot A.
 set -eu
@@ -22,6 +23,7 @@ prefix=${RAUC_MOUNT_PREFIX:-/run/rauc}
 cmdline_tool=${IRONFLOCKOS_RPI_CMDLINE:-/usr/lib/ironflockos/rpi-cmdline}
 extlinux_tool=${IRONFLOCKOS_TEGRA_EXTLINUX:-/usr/lib/ironflockos/tegra-extlinux}
 capsule_tool=${IRONFLOCKOS_TEGRA_CAPSULE:-/usr/lib/ironflockos/tegra-capsule}
+boot_script_tool=${IRONFLOCKOS_BOOT_SCRIPT:-/usr/lib/ironflockos/boot-script}
 
 fail() {
   echo "rauc-post-install: $*" >&2
@@ -78,6 +80,13 @@ for i in ${RAUC_TARGET_SLOTS:-}; do
       fi
       unmount_slot
       echo "rauc-post-install: copied machine-id and hostname to slot $i ($device)$extlinux"
+      # A boot script staged for a trial goes: the new slot's first boot
+      # runs the script in use, and the slot stages its own once it has
+      # proven itself (ADR-0022; it does nothing where GRUB is not the boot
+      # loader). Never a reason to fail.
+      if [ -x "$boot_script_tool" ]; then
+        "$boot_script_tool" cancel || echo "rauc-post-install: could not cancel a staged boot script" >&2
+      fi
       ;;
     boot)
       # The root slot of the group: RAUC_SLOT_PARENT_<i> names it.
