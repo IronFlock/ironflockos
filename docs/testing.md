@@ -644,13 +644,21 @@ plan with `DRY_RUN=1`; and the FreeRTOS statement in the slot image must
 offer the source at that mirror and name the contact, and the slot image
 must carry the Agreement byte for byte (`debugfs`). The job takes a few
 minutes and runs beside `jetson-flash`, which takes longer.
+The build fails when NVIDIA's `/boot/initrd` is not the one
+`targets/jetson-orin/initrd.sources` was made from (its SHA-256), and so
+does the root tree check; `tools/initrd-sources.py` makes the list anew
+from NVIDIA's package (it reads public URLs and downloads every candidate
+Ubuntu package, so it runs by hand, not in CI).
 `test/unit/jetson-release.bats` covers it without a build: the switch off
 (today's build matrix, image list, attestation subjects, published files
 and source lists, each compared with what they were), the switch on (the
 Jetson files, `SHA256SUMS`, the source list apart), the release notes rule,
 the Agreement's pin at `stage`, every NVIDIA source package's decision
 (`release/sources`), Ubuntu's archive and Launchpad with stand-ins for
-`docker` and `curl`, the pool paths, the contact and an emptied copy of it,
+`docker` and `curl`, the initrd's list (its form, its version, the plan
+taking its source packages, a list of another initrd refused), the
+decisions of today's images with `libnvidia-container`'s tag source, the
+pool paths, the contact and an emptied copy of it,
 and `build/jetson-release.sh check` and `files`. `tegra-capsule.bats` checks
 the statement's mirror and contact at build time, and `verify-bundles.bats`
 the check of a Jetson bundle against the keyring in its slot image.

@@ -913,7 +913,8 @@ the `.flock` and `nv_boot_control.conf` on the ESP, and the archive.
 `just build jetson-orin base` builds the image and leaves the tree in
 `<work>/ironflockos-jetson-orin-base/rootfs`. On an arm64 host,
 `sudo test/image/jetson-rootfs-check.sh <work>/ironflockos-jetson-orin-base/rootfs`
-checks it: the versions, the sources and pins, kernel, initrd and `nvgpu`,
+checks it: the versions, the sources and pins, kernel, initrd (the one
+`initrd.sources` lists the Ubuntu programs of) and `nvgpu`,
 units and masks, the RAUC backend and the health gate's timer, the capsules
 (unchanged against the package's checksums), the FreeRTOS statement and the
 boot firmware report, the baked agent and the `nvidia` runtime, the
@@ -977,7 +978,9 @@ contact.
     the Ubuntu source packages of the image to the release's pool; the
     FreeRTOS statement offers the source there and names IronFlock GmbH,
     its postal address and legal@ironflock.com (built, WP-6.8);
-  - open: the source of NVIDIA's initrd (`nvidia-l4t-initrd`), which
-    carries Ubuntu programs under the GPL whose versions NVIDIA does not
-    name; until it is decided in `release/sources`, a release with Jetson
-    files stops at its start.
+  - NVIDIA's initrd (`nvidia-l4t-initrd`) carries Ubuntu programs under
+    the GPL and LGPL that NVIDIA does not name; `targets/jetson-orin/initrd.sources`
+    lists their Ubuntu packages and versions, found by content with
+    `tools/initrd-sources.py`, and the release publishes their source
+    packages; the build fails when `/boot/initrd` is not the initrd the
+    list was made from (built, WP-6.8).

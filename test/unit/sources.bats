@@ -61,8 +61,8 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "release/sources: every line is upstream with an https URL, l4t with a pin's name, or none or open with a reason" {
-  run awk '!/^[ \t]*(#|$)/ && !($2 == "upstream" && $3 ~ /^https:\/\/[^ ]*\{upstream\}[^ ]*$/ && NF == 3) && !($2 == "l4t" && $3 ~ /^[A-Z][A-Z0-9_]*$/ && NF == 3) && !(($2 == "none" || $2 == "open") && NF >= 3) { print FILENAME ":" FNR ": " $0 }' \
+@test "release/sources: every line is upstream with an https URL, l4t with a pin's name, initrd with a file, or none or open with a reason" {
+  run awk '!/^[ \t]*(#|$)/ && !($2 == "upstream" && $3 ~ /^https:\/\/[^ ]*\{upstream\}[^ ]*$/ && NF == 3) && !($2 == "l4t" && $3 ~ /^[A-Z][A-Z0-9_]*$/ && NF == 3) && !($2 == "initrd" && NF == 3) && !(($2 == "none" || $2 == "open") && NF >= 3) { print FILENAME ":" FNR ": " $0 }' \
     "$repo/release/sources"
   [ "$status" -eq 0 ]
   [ -z "$output" ]

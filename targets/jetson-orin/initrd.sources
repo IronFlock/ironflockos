@@ -1,0 +1,87 @@
+# The Ubuntu programs in NVIDIA's initrd (WP-6.8; docs/release.md, "Jetson"):
+# nvidia-l4t-initrd's /boot/initrd, which the Jetson image boots, carries
+# programs of Ubuntu 24.04 under the GPL and LGPL that NVIDIA names nowhere.
+# Each line: an Ubuntu binary package, its version, the source package and
+# version it is built from, its Built-Using, and how many of the initrd's
+# files only this version ships byte for byte, then how many it covers
+# (a file several versions ship alike is covered by one of them). The
+# release publishes these source packages (release/sources: initrd), and the
+# build fails when the image's /boot/initrd is not INITRD_SHA256.
+#
+# Made by tools/initrd-sources.py from NVIDIA's package, by content: every
+# file of the initrd against the same path in every arm64 .deb Ubuntu
+# published for noble (Contents-arm64, Launchpad's publishing history). For
+# another L4T pin:
+#   curl -fsSLO https://repo.download.nvidia.com/jetson/som/pool/main/n/nvidia-l4t-initrd/nvidia-l4t-initrd_<version>_arm64.deb
+#   python3 -I tools/initrd-sources.py nvidia-l4t-initrd_<version>_arm64.deb <cache> >targets/jetson-orin/initrd.sources
+# The files from no Ubuntu package are listed last, with the licence their
+# header names.
+INITRD_PACKAGE=nvidia-l4t-initrd
+INITRD_PACKAGE_VERSION=39.2.1-20260806224157
+INITRD_SHA256=5e52dc0b1be70a3650a2aeb0e350108fd877b5cb0074325f0f748e630d5566e8
+# binary	version	source	source version	built-using	files: settled by this version alone, covered
+bash	5.2.21-2ubuntu4	bash	5.2.21-2ubuntu4	-	1 1
+busybox	1:1.36.1-6ubuntu3.1	busybox	1:1.36.1-6ubuntu3.1	-	1 1
+coreutils	9.4-3ubuntu6.1	coreutils	9.4-3ubuntu6.1	-	25 25
+dash	0.5.12-6ubuntu5	dash	0.5.12-6ubuntu5	-	1 1
+debianutils	5.17build1	debianutils	5.17build1	-	1 2
+dpkg	1.22.6ubuntu6.6	dpkg	1.22.6ubuntu6.6	-	0 1
+e2fsprogs	1.47.0-2.4~exp1ubuntu4.1	e2fsprogs	1.47.0-2.4~exp1ubuntu4.1	-	1 1
+fdisk	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+grep	3.11-4build1	grep	3.11-4build1	-	1 1
+gzip	1.12-1ubuntu3.1	gzip	1.12-1ubuntu3.1	-	1 2
+iproute2	6.1.0-1ubuntu6.2	iproute2	6.1.0-1ubuntu6.2	-	1 1
+isc-dhcp-client	4.4.3-P1-4ubuntu2	isc-dhcp	4.4.3-P1-4ubuntu2	-	1 7
+kmod	31+20240202-2ubuntu7.1	kmod	31+20240202-2ubuntu7.1	-	1 1
+libacl1	2.3.2-1build1.1	acl	2.3.2-1build1.1	-	1 1
+libatomic1	14.2.0-4ubuntu2~24.04	gcc-14	14.2.0-4ubuntu2~24.04	-	1 1
+libattr1	1:2.5.2-1build1.1	attr	1:2.5.2-1build1.1	-	1 1
+libblkid1	2.39.3-9ubuntu6.4	util-linux	2.39.3-9ubuntu6.4	-	1 1
+libbpf1	1:1.3.0-2build2	libbpf	1.3.0-2build2	-	1 1
+libc-bin	2.39-0ubuntu8.7	glibc	2.39-0ubuntu8.7	-	0 1
+libc6	2.39-0ubuntu8.7	glibc	2.39-0ubuntu8.7	-	4 5
+libcap2	1:2.66-5ubuntu2.2	libcap2	1:2.66-5ubuntu2.2	-	1 1
+libcom-err2	1.47.0-2.4~exp1ubuntu4.1	e2fsprogs	1.47.0-2.4~exp1ubuntu4.1	-	1 1
+libelf1t64	0.190-1.1ubuntu0.1	elfutils	0.190-1.1ubuntu0.1	-	1 1
+libext2fs2t64	1.47.0-2.4~exp1ubuntu4.1	e2fsprogs	1.47.0-2.4~exp1ubuntu4.1	-	2 2
+libfdisk1	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+libgcc-s1	14.2.0-4ubuntu2~24.04.1	gcc-14	14.2.0-4ubuntu2~24.04.1	-	1 1
+libgmp10	2:6.3.0+dfsg-2ubuntu6.1	gmp	2:6.3.0+dfsg-2ubuntu6.1	-	1 1
+libgssapi-krb5-2	1.20.1-6ubuntu2.6	krb5	1.20.1-6ubuntu2.6	-	1 1
+libk5crypto3	1.20.1-6ubuntu2.6	krb5	1.20.1-6ubuntu2.6	-	1 1
+libkeyutils1	1.6.3-3build1	keyutils	1.6.3-3build1	-	1 1
+libkrb5-3	1.20.1-6ubuntu2.6	krb5	1.20.1-6ubuntu2.6	-	1 1
+libkrb5support0	1.20.1-6ubuntu2.6	krb5	1.20.1-6ubuntu2.6	-	1 1
+liblz4-1	1.9.4-1build1.1	lz4	1.9.4-1build1.1	-	1 1
+liblzma5	5.6.1+really5.4.5-1ubuntu0.2	xz-utils	5.6.1+really5.4.5-1ubuntu0.2	-	1 1
+libmnl0	1.0.5-2build1	libmnl	1.0.5-2build1	-	1 1
+libmount1	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+libpcre2-8-0	10.42-4ubuntu2.1	pcre2	10.42-4ubuntu2.1	-	1 1
+libreadline8t64	8.2-4build1	readline	8.2-4build1	-	1 1
+libselinux1	3.5-2ubuntu2.1	libselinux	3.5-2ubuntu2.1	-	1 1
+libsmartcols1	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+libssl3t64	3.0.13-0ubuntu3.6	openssl	3.0.13-0ubuntu3.6	-	1 1
+libtinfo6	6.4+20240113-1ubuntu2	ncurses	6.4+20240113-1ubuntu2	-	1 1
+libtirpc-common	1.3.4+ds-1.1build1	libtirpc	1.3.4+ds-1.1build1	-	0 1
+libtirpc3t64	1.3.4+ds-1.1build1	libtirpc	1.3.4+ds-1.1build1	-	1 1
+libuuid1	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+libzstd1	1.5.5+dfsg2-2build1.1	libzstd	1.5.5+dfsg2-2build1.1	-	1 1
+mawk	1.3.4.20240123-1build1	mawk	1.3.4.20240123-1build1	-	1 1
+mount	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	1 1
+mount	2.39.3-9ubuntu6.4	util-linux	2.39.3-9ubuntu6.4	-	1 1
+net-tools	2.10-0.1ubuntu4.4	net-tools	2.10-0.1ubuntu4.4	-	1 1
+netbase	6.4	netbase	6.4	-	3 3
+nfs-common	1:2.6.4-3ubuntu5.1	nfs-utils	1:2.6.4-3ubuntu5.1	-	1 1
+sed	4.9-2build1	sed	4.9-2build1	-	1 1
+tar	1.35+dfsg-3build1	tar	1.35+dfsg-3build1	-	1 1
+util-linux	2.39.3-9ubuntu6.3	util-linux	2.39.3-9ubuntu6.3	-	3 3
+util-linux	2.39.3-9ubuntu6.4	util-linux	2.39.3-9ubuntu6.4	-	1 1
+xxd	2:9.1.0016-1ubuntu7.9	vim	2:9.1.0016-1ubuntu7.9	-	1 1
+zlib1g	1:1.3.dfsg-3.1ubuntu2.1	zlib	1:1.3.dfsg-3.1ubuntu2.1	-	1 1
+zstd	1.5.5+dfsg2-2build1.1	libzstd	1.5.5+dfsg2-2build1.1	-	1 1
+# not from Ubuntu: etc/fstab	a6b093c9916c6c54e5d634d3689f1a0132e14cce0b8e50ff445da8e85acfbd17
+# not from Ubuntu: etc/resolv.conf	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+# not from Ubuntu: init	7aee924ad7206877f089b7a91fc66a0190b9b930a4b5d642400117a65ebb71ad	LicenseRef-NvidiaProprietary
+# not from Ubuntu: usr/lib/firmware/nvidia/tegra186/xusb.bin	42b66946dcea3b4af7bb6e7a9047e7159ae98a8bfffca7fca17571b24a71f3ac
+# not from Ubuntu: usr/lib/firmware/rtl_nic/rtl8153a-4.fw	9cdafb4b6caa944c35b6ccb0ab7563ff377a36f38720b5b1eb35d90ecd756cd5
+# not from Ubuntu: usr/share/docs/nvidia-tegra/LICENSE.rtl8153a-4.fw	a61351665b4f264f6c631364f85b907d8f8f41f8b369533ef4021765f9f3b62e

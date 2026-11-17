@@ -192,6 +192,9 @@ offer=$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
 load_conf "$src/build/release.conf"
 load_contact "$src/release/contact"
 mirror=$DL_BASE/ironflockos/sources/$(l4t_sources_dir)/
+initrd_sha=$(sed -n 's/^INITRD_SHA256=//p' "$src/targets/jetson-orin/initrd.sources")
+check "NVIDIA's initrd is the one targets/jetson-orin/initrd.sources lists the Ubuntu programs of ($initrd_sha)" \
+  bash -c "[ \"\$(sha256sum <'$root/boot/initrd' | cut -d' ' -f1)\" = '$initrd_sha' ]"
 check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION, at the mirror $mirror" \
   bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -qxF '  $mirror' '$offer'"
 check "the source offer names $CONTACT_NAME, its postal address and $CONTACT_EMAIL (release/contact)" \

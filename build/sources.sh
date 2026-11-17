@@ -139,6 +139,25 @@ l4t_files() {
   done < <(awk '!/^[ \t]*(#|$)/ && $2 == "l4t" { print $3 }' "$RULES" | sort -u)
 }
 
+# initrd_sources LIST: for each source package of LIST that release/sources
+# decides "initrd FILE" (NVIDIA's initrd, built from Ubuntu's binary
+# packages), the source packages FILE names, "<source> TAB <version>", and
+# those their Built-Using names (as image does). FILE must be of that
+# package's version (INITRD_PACKAGE_VERSION), or the plan fails.
+initrd_sources() {
+  local list=$1 src ver file want
+  while read -r src file; do
+    ver=$(awk -F'\t' -v s="$src" '$1 == s { print $2; exit }' "$list")
+    [ -n "$ver" ] || continue
+    [ -f "$repo/$file" ] || die "release/sources: $src: initrd $file does not exist"
+    want=$(sed -n 's/^INITRD_PACKAGE_VERSION=//p' "$repo/$file")
+    [ "$want" = "$ver" ] ||
+      die "$src $ver: $file lists the initrd of ${want:-no version} (tools/initrd-sources.py makes it anew)"
+    awk -F'\t' '!/^#/ && !/^[A-Z0-9_]+=/ && NF >= 5 { print $3 "\t" $4 ($5 == "-" ? "" : "\t" $5) }' "$repo/$file" |
+      bash "$here/sources.sh" image
+  done < <(awk '!/^[ \t]*(#|$)/ && $2 == "initrd" { print $1, $3 }' "$RULES")
+}
+
 plan() {
   local list=$1 distro=${2:-debian-trixie} src ver missing=() fallback
   [ -s "$list" ] || die "$list lists no source packages"
@@ -161,6 +180,12 @@ plan() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   l4t_files >"$tmp/l4t.tsv"
+  # NVIDIA's initrd: the Ubuntu source packages of its programs join the list.
+  initrd_sources "$list" >"$tmp/initrd.tsv"
+  if [ -s "$tmp/initrd.tsv" ]; then
+    LC_ALL=C sort -u "$list" "$tmp/initrd.tsv" >"$tmp/list.tsv"
+    list=$tmp/list.tsv
+  fi
 
   # release/sources first: "none" and "upstream" lines go to the plan as
   # they are, every other source package to the archives. An "l4t NAME"
@@ -177,8 +202,8 @@ plan() {
     FNR == NR {
       if ($0 ~ /^[ \t]*(#|$)/) next
       n = split($0, w, /[ \t]+/)
-      if (n < 3 || (w[2] != "none" && w[2] != "upstream" && w[2] != "l4t" && w[2] != "open") || (w[2] == "l4t" && n != 3)) {
-        print "error: release/sources:" FNR ": not \"<source> none|upstream|l4t|open ...\"" > "/dev/stderr"; bad = 1; next
+      if (n < 3 || (w[2] != "none" && w[2] != "upstream" && w[2] != "l4t" && w[2] != "open" && w[2] != "initrd") || ((w[2] == "l4t" || w[2] == "initrd") && n != 3)) {
+        print "error: release/sources:" FNR ": not \"<source> none|upstream|l4t|initrd|open ...\"" > "/dev/stderr"; bad = 1; next
       }
       arg = $0
       sub(/^[^ \t]+[ \t]+[^ \t]+[ \t]+/, "", arg)
@@ -204,6 +229,9 @@ plan() {
       }
       if (!(src in kind)) { print src "\t" ver > archive; next }
       if (kind[src] == "none") { print src "\t" ver "\t-\t-\t-\t" val[src]; next }
+      if (kind[src] == "initrd") {
+        print src "\t" ver "\t-\t-\t-\tits initrd'"'"'s Ubuntu programs: their source packages are listed here (" val[src] "); its own files are NVIDIA'"'"'s"; next
+      }
       if (kind[src] == "open") {
         if (allow_open == "1") {
           print "warning: the source of " src " " ver " is open (release/sources): " val[src] > "/dev/stderr"

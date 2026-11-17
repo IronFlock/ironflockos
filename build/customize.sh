@@ -147,6 +147,13 @@ case "$BOOTLOADER" in
     # gives it); rauc-post-install points a slot it writes at that slot.
     [ -s "$ROOT/boot/Image" ] || die "no /boot/Image (nvidia-l4t-kernel)"
     [ -s "$ROOT/boot/initrd" ] || die "no /boot/initrd (nvidia-l4t-initrd)"
+    # NVIDIA's initrd carries Ubuntu programs; targets/jetson-orin/initrd.sources
+    # lists their packages for this initrd only, and the release publishes
+    # their sources. Another initrd needs the list made anew
+    # (tools/initrd-sources.py).
+    initrd_sha=$(sed -n 's/^INITRD_SHA256=//p' "$target_dir/initrd.sources")
+    [ "$(sha256sum <"$ROOT/boot/initrd" | cut -d' ' -f1)" = "$initrd_sha" ] ||
+      die "/boot/initrd is not the initrd targets/jetson-orin/initrd.sources lists the programs of (INITRD_SHA256): make the list anew with tools/initrd-sources.py"
     mkdir -p "$ROOT/boot/extlinux"
     SLOT=A ROOT_PARTUUID=$(uuid_for rootfs-a) render "$target_dir/boot/extlinux.conf" >"$ROOT/boot/extlinux/extlinux.conf"
     mapfile -t kvers < <(cd "$ROOT/usr/lib/modules" && ls)

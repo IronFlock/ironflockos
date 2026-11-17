@@ -12,6 +12,10 @@
 #                  of the source takes its other line, and fails without one
 #   none REASON    no source is published; SOURCES gives the reason. Only
 #                  for software under no copyleft licence.
+#   initrd FILE    NVIDIA's initrd, built from Ubuntu's binary packages: the
+#                  source packages FILE lists (tools/initrd-sources.py) are
+#                  published as the image's own Ubuntu packages are; FILE
+#                  must be of this package's version
 #   open REASON    not decided yet: fails the release (and a release with
 #                  Jetson files at its start, build/jetson-release.sh check)
 # A source package that is in neither the archives nor this list fails the
@@ -65,11 +69,12 @@ nvidia-l4t-nvml                   none NVIDIA Driver License Agreement: binaries
 nvidia-l4t-nvpmodel               none NVIDIA Driver License Agreement: binaries only
 nvidia-l4t-tools                  none NVIDIA Driver License Agreement; tipc_test Apache-2.0: binaries only
 # NVIDIA's initrd (/boot/initrd, which L4TLauncher boots) carries programs
-# of Ubuntu 24.04 under the GPL and LGPL (BusyBox 1:1.36.1-6ubuntu3.1, bash,
-# coreutils, util-linux, e2fsprogs, kmod, nfs-utils, the ISC DHCP client,
-# glibc and others), copied from Ubuntu's packages without a list of their
-# versions; public_sources.tbz2 does not hold them.
-nvidia-l4t-initrd                 open Ubuntu programs under the GPL and LGPL whose source package versions NVIDIA does not name
+# of Ubuntu 24.04 under the GPL and LGPL (BusyBox, bash, coreutils,
+# util-linux, glibc and others) without naming them; its own init is
+# NVIDIA's. targets/jetson-orin/initrd.sources lists their Ubuntu packages,
+# found by content (tools/initrd-sources.py), and the release publishes
+# their source packages as the image's own Ubuntu packages'.
+nvidia-l4t-initrd                 initrd targets/jetson-orin/initrd.sources
 # The container toolkit of JetPack 7.2.1 from NVIDIA's common repository
 # (libnvidia-container 1.19.1, with LGPL-3.0 parts): the tag's source.
 # Other versions (the nvidia variant's) take the line above.

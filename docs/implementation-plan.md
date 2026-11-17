@@ -108,7 +108,7 @@ decision), in progress.
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | built (NVIDIA's own capsules from `nvidia-l4t-bootloader`, the build's lock-step check, `tegra-capsule` staged from `rauc-post-install`, the maintenance window file, the report after the restart, the FreeRTOS statement; unit tests against fakes of the firmware); open: a capsule update on a module (WP-6.6), the window's device-agent and Studio side, generated capsules for other carriers (WP-6.8) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
 | 6.7 | Follow-up: Jetson RT kernel | ironflockos | 5 | 6.6, 4b.1 | open |
-| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | built: the rootfs check for the `copyright` files of NVIDIA's packages, NVIDIA's apt key as NVIDIA serves it, IronFlockOS's names in place of Ubuntu's, and the release side behind the repository variable `JETSON_RELEASE` (the Jetson image, bundle and flash kit with `NVIDIA-LICENSE.txt`, the source mirror with Ubuntu's sources and NVIDIA's, the contact in the source offers, the dry run on every pull request); signed off by IronFlock 2026-11-17; open: the source decision for NVIDIA's initrd (a release with Jetson files stops until it is made), setting `JETSON_RELEASE` for the release the owner names, FlockFlasher's licence screen (with WP-6.6) |
+| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | built: the rootfs check for the `copyright` files of NVIDIA's packages, NVIDIA's apt key as NVIDIA serves it, IronFlockOS's names in place of Ubuntu's, and the release side behind the repository variable `JETSON_RELEASE` (the Jetson image, bundle and flash kit with `NVIDIA-LICENSE.txt`, the source mirror with Ubuntu's sources and NVIDIA's, the contact in the source offers, the dry run on every pull request); signed off by IronFlock 2026-11-17; the sources of the Ubuntu programs in NVIDIA's initrd, found by content (`initrd.sources`); open: setting `JETSON_RELEASE` for the release the owner names, FlockFlasher's licence screen (with WP-6.6) |
 | 7.1 | `arm64-efi` target and installer payload | ironflockos | 3 | 1.5 | done (#161; arm64-efi installer #172) |
 | 7.2 | ReswarmOS migration guide and sunset | ironflockos, GCS, flasher, device-agent | 2 | 2.10 | open |
 | 7.3 | Documentation refresh and review | ironflockos | 3 | 7.1, 7.2 | open |
@@ -818,11 +818,12 @@ Only after CUDA on the RT kernel is verified on the chosen JetPack release: `nvb
   legal@ironflock.com); the build fails when it does not. `ci.yml`'s `jetson-release`
   proves the path on every pull request in dry mode, without the switch
   (`test/image/jetson-release-check.sh`). IronFlock signed off the review on
-  2026-11-17, with the answers recorded in it. Open: `nvidia-l4t-initrd`'s initrd carries
-  Ubuntu programs under the GPL whose versions NVIDIA does not name, and its source
-  decision stops a release with Jetson files until it is made; setting `JETSON_RELEASE`
-  on the owner's word; FlockFlasher's licence screen, with WP-6.6, when FlockFlasher
-  writes a Jetson image.
+  2026-11-17, with the answers recorded in it. NVIDIA's initrd carries Ubuntu programs
+  that NVIDIA does not name: `tools/initrd-sources.py` found their 57 packages and
+  versions by content, `targets/jetson-orin/initrd.sources` records them with the
+  initrd's hash, which the build checks, and the release publishes their source packages.
+  Open: setting `JETSON_RELEASE` on the owner's word; FlockFlasher's licence
+  screen, with WP-6.6, when FlockFlasher writes a Jetson image.
 
 ## Phase 7: Generic arm64 EFI, decommission, documentation
 

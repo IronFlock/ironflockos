@@ -81,6 +81,7 @@ The section numbers are those of the r39.2.1 text.
 |-----------|---------|--------------|
 | Kernel `Image`, out-of-tree modules, DTBs (`nvidia-l4t-kernel`, `-kernel-oot-modules`, `-kernel-nvgpu`, `-kernel-dtbs`) | GPL-2.0; `nvgpu` GPL-2.0-only with MIT parts | The corresponding source. NVIDIA's notice points to `source_sync.sh` or `oss-requests@nvidia.com`. NVIDIA's `public_sources.tbz2` (295 MB) holds the kernel, the out-of-tree modules and `nvgpu` |
 | `libnvidia-container1` | Apache-2.0, LGPL-3.0+, BSD-3-Clause, MIT | The LGPL parts' source (GitHub, tag `v1.19.1`) |
+| NVIDIA's initrd (`nvidia-l4t-initrd`, `/boot/initrd`) | 100 of its 106 files are Ubuntu 24.04's, byte for byte, from 57 binary packages of 41 source packages (BusyBox, bash, coreutils, util-linux, e2fsprogs, kmod, nfs-utils, the ISC DHCP client, glibc, krb5, OpenSSL and others): GPL, LGPL and others; NVIDIA names none of them. Its `init` is NVIDIA's (`LicenseRef-NvidiaProprietary`); two firmware files and a Realtek licence text | The source of those Ubuntu packages at their versions. `targets/jetson-orin/initrd.sources` lists them, found by content; the release publishes their source packages with the image's own Ubuntu packages (point 3) |
 | `nvidia-container-toolkit` | Apache-2.0 | Notices |
 | `nvidia-l4t-init` configs, `nvethernetrm`, display parts | MIT | Notices |
 | NVDLA (FlatBuffers), `tipc_test`, the BSD parts of `nvbootctrl` | Apache-2.0, BSD | Notices |
@@ -149,9 +150,12 @@ package names). The image does the same (point 10; WP-6.8;
    Ubuntu packages of the image get their source packages from Ubuntu's archive, or from
    Launchpad when the archive no longer has the version, into the release's pool
    (`ironflockos/sources/ubuntu/`), as the Debian packages do. `nvidia-l4t-initrd`'s
-   initrd carries Ubuntu programs under the GPL and LGPL whose package versions NVIDIA
-   does not name and whose source the sources tarball does not hold; its decision is
-   open, and a release with Jetson files stops until it is made.
+   initrd carries Ubuntu programs under the GPL and LGPL that NVIDIA does not name and
+   whose source the sources tarball does not hold: `tools/initrd-sources.py` found their
+   Ubuntu packages and versions by comparing each file's SHA-256 with the same path in
+   every arm64 package Ubuntu published for noble, `targets/jetson-orin/initrd.sources`
+   records them with the initrd's hash, which the build checks, and the release mirrors
+   their source packages to the same pool. The mirror covers the initrd.
 4. **IronFlockOS does not publish the flash package.** CI still makes it on every pull request
    as a test. Users get a flash kit instead: IronFlockOS's own scripts. On the flashing host,
    the kit downloads the pinned BSP from NVIDIA, checks it against the SHA-256 in

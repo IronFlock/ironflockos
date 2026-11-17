@@ -255,41 +255,68 @@ jetson_list() {
   printf 'docker-ce\t5:29.10.0-1~ubuntu.24.04~noble\ncontainerd.io\t2.4.2-4~ubuntu.24.04~noble\n'
 }
 
-@test "release/sources: every line is upstream, l4t, none or open, and no none line names a copyleft licence" {
-  run awk '!/^[ \t]*(#|$)/ && !($2 == "upstream" && $3 ~ /^https:\/\/[^ ]*\{upstream\}[^ ]*$/ && NF == 3) && !($2 == "l4t" && $3 ~ /^[A-Z][A-Z0-9_]*$/ && NF == 3) && !(($2 == "none" || $2 == "open") && NF >= 3) { print FILENAME ":" FNR ": " $0 }' \
+@test "release/sources: every line is upstream, l4t, initrd, none or open; no none line names a copyleft licence; nothing is open" {
+  run awk '!/^[ \t]*(#|$)/ && !($2 == "upstream" && $3 ~ /^https:\/\/[^ ]*\{upstream\}[^ ]*$/ && NF == 3) && !($2 == "l4t" && $3 ~ /^[A-Z][A-Z0-9_]*$/ && NF == 3) && !($2 == "initrd" && NF == 3) && !(($2 == "none" || $2 == "open") && NF >= 3) { print FILENAME ":" FNR ": " $0 }' \
     "$repo/release/sources"
   [ "$status" -eq 0 ] && [ -z "$output" ]
   run awk '$2 == "none" && /GPL/' "$repo/release/sources"
   [ -z "$output" ]
+  run awk '!/^[ \t]*#/ && $2 == "open"' "$repo/release/sources"
+  [ -z "$output" ]
+}
+
+# fake_archive: docker that answers resolve as apt in the build container
+# would for every source package, from Ubuntu's primary archive.
+fake_archive() {
+  mkdir -p "$tmp/bin"
+  cat >"$tmp/bin/docker" <<'EOF'
+#!/bin/bash
+case "$*" in *"sources.sh resolve ubuntu-noble"*) ;; *) echo "docker: $*" >&2; exit 2 ;; esac
+while IFS=$'\t' read -r src ver; do
+  v=${ver#*:}
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$src" "$ver" "http://archive.ubuntu.com/ubuntu/pool/main/x/$src/${src}_$v.dsc" "${src}_$v.dsc" 1 "SHA256:00"
+done
+EOF
+  chmod +x "$tmp/bin/docker"
 }
 
 @test "every NVIDIA source package of the Jetson tree has its decision; NVIDIA's GPL parts and the boot firmware get the L4T sources" {
   load_conf "$repo/targets/jetson-orin/bsp.conf"
   jetson_list >"$tmp/list"
-  SOURCES_ALLOW_OPEN=1 run bash "$sources" plan "$tmp/list" ubuntu-noble
+  fake_archive
+  PATH="$tmp/bin:$PATH" run bash "$sources" plan "$tmp/list" ubuntu-noble
   echo "$output"
   [ "$status" -eq 0 ]
-  plan=$(grep -v '^warning:' <<<"$output")
-  [ "$(cut -f1 <<<"$plan" | sort -u | wc -l | tr -d ' ')" = 24 ]
+  plan=$(grep -v '^==>' <<<"$output")
+  [ "$(grep -c '^nvidia-l4t-' <<<"$plan")" = 20 ]
+  [ "$(grep -c 'OPEN' <<<"$plan")" = 0 ]
   for p in kernel kernel-nvgpu kernel-oot-modules kernel-dtbs display-kernel bootloader; do
     grep -q "^nvidia-l4t-$p	[^	]*	l4t-39.2.1/public_sources.tbz2	$L4T_SOURCES_URL	SHA256:$L4T_SOURCES_SHA256	-$" <<<"$plan"
   done
   grep -q "^libnvidia-container	1.19.1-1	l4t-39.2.1/libnvidia-container-1.19.1.tar.gz	$LIBNVIDIA_CONTAINER_SOURCE_URL	SHA256:$LIBNVIDIA_CONTAINER_SOURCE_SHA256	-$" <<<"$plan"
   grep -q "^nvidia-l4t-core	39.2.1-20260806224157	-	-	-	NVIDIA Driver License Agreement" <<<"$plan"
-  grep -q "^nvidia-l4t-initrd	39.2.1-20260806224157	-	-	-	OPEN: " <<<"$plan"
-  [[ "$output" == *"warning: the source of nvidia-l4t-initrd 39.2.1-20260806224157 is open"* ]]
+  # NVIDIA's initrd: its Ubuntu programs' source packages, from Ubuntu's archive
+  grep -q "^nvidia-l4t-initrd	39.2.1-20260806224157	-	-	-	its initrd's Ubuntu programs: their source packages are listed here (targets/jetson-orin/initrd.sources)" <<<"$plan"
+  for s in busybox bash coreutils glibc util-linux; do
+    grep -q "^$s	[^	]*	ubuntu/$s/" <<<"$plan" || { echo "no $s"; return 1; }
+  done
+  n=$(awk -F'\t' '!/^#/ && !/^[A-Z0-9_]+=/ && NF >= 5 { print $3 "\t" $4 }' "$repo/targets/jetson-orin/initrd.sources" | sort -u | wc -l | tr -d ' ')
+  [ "$(grep -c '	ubuntu/' <<<"$plan")" -ge "$n" ]
 }
 
-@test "an open decision fails the plan; the nvidia variant's libnvidia-container keeps its decision" {
-  jetson_list >"$tmp/list"
-  run bash "$sources" plan "$tmp/list" ubuntu-noble
+@test "an open decision fails the plan" {
+  printf 'nvidia-l4t-x\t39.2.1-20260806224157\n' >"$tmp/list"
+  printf 'nvidia-l4t-x open no decision yet\n' >"$tmp/rules"
+  # a copy of the repository's tools with one open line in release/sources
+  mkdir -p "$tmp/repo"
+  cp -R "$repo/build" "$repo/release" "$repo/targets" "$repo/distros" "$tmp/repo/"
+  cat "$tmp/rules" >>"$tmp/repo/release/sources"
+  run bash "$tmp/repo/build/sources.sh" plan "$tmp/list" ubuntu-noble
   [ "$status" -ne 0 ]
-  [[ "$output" == *"error: the source of nvidia-l4t-initrd 39.2.1-20260806224157 is open (release/sources)"* ]]
-  # the nvidia variant's toolkit (Debian, profiles/nvidia/versions): as before
-  printf 'libnvidia-container\t1.20.1-1\n' >"$tmp/list"
-  run bash "$sources" plan "$tmp/list"
+  [[ "$output" == *"error: the source of nvidia-l4t-x 39.2.1-20260806224157 is open (release/sources): no decision yet"* ]]
+  SOURCES_ALLOW_OPEN=1 run bash "$tmp/repo/build/sources.sh" plan "$tmp/list" ubuntu-noble
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf 'libnvidia-container\t1.20.1-1\t-\t-\t-\tApache-2.0 (https://github.com/NVIDIA/libnvidia-container)')" ]
+  [[ "$output" == *$'nvidia-l4t-x\t39.2.1-20260806224157\t-\t-\t-\tOPEN: no decision yet'* ]]
 }
 
 @test "an L4T package of another version than the pinned sources fails the plan" {
@@ -411,12 +438,18 @@ EOF
   IRONFLOCKOS_RULES=$tmp/rules run bash "$jr" check 1.0.0
   echo "$output"
   [ "$status" -eq 0 ]
-  # the repository as it is: the initrd's source is open
+  # the repository as it is: nothing open
   run bash "$jr" check 1.0.0
+  echo "$output"
+  [ "$status" -eq 0 ]
+  # an open decision stops it
+  printf 'nvidia-l4t-x open no decision yet\n' >>"$tmp/rules"
+  IRONFLOCKOS_RULES=$tmp/rules run bash "$jr" check 1.0.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"release/sources: the source of nvidia-l4t-initrd is still open"* ]]
+  [[ "$output" == *"release/sources: the source of nvidia-l4t-x is still open"* ]]
   [[ "$output" != *"bsp.conf:"* ]]
   # an emptied contact, notes without the link: each named
+  grep -v ' open ' "$repo/release/sources" >"$tmp/rules"
   sed 's/^CONTACT_NAME=.*/CONTACT_NAME=/' "$repo/release/contact" >"$tmp/contact"
   notes hardware
   IRONFLOCKOS_RULES=$tmp/rules IRONFLOCKOS_CONTACT=$tmp/contact run bash "$jr" check 1.0.0
@@ -475,4 +508,33 @@ EOF
   rootfs=$(awk '$0 == "  jetson-rootfs:" { f = 1; next } f && /^  [a-z]/ { exit } f' "$wf/ci.yml")
   [[ "$rootfs" == *'build/jetson-release.sh files out/ironflockos-jetson-orin-base'* ]]
   [ -x "$repo/test/image/jetson-release-check.sh" ] && [ -x "$jr" ]
+}
+
+# --- NVIDIA's initrd ------------------------------------------------------------
+
+@test "initrd.sources: the Ubuntu packages of NVIDIA's initrd at the pin, each with its source, and the initrd's hash" {
+  f=$repo/targets/jetson-orin/initrd.sources
+  load_conf "$repo/targets/jetson-orin/target.conf"
+  [ "$(sed -n 's/^INITRD_PACKAGE=//p' "$f")" = nvidia-l4t-initrd ]
+  [ "$(sed -n 's/^INITRD_PACKAGE_VERSION=//p' "$f")" = "$L4T_PACKAGE_VERSION" ]
+  [[ "$(sed -n 's/^INITRD_SHA256=//p' "$f")" =~ ^[0-9a-f]{64}$ ]]
+  # every line: binary, version, source, source version, Built-Using, counts
+  run awk -F'\t' '!/^#/ && !/^[A-Z0-9_]+=/ && !(NF == 6 && $1 ~ /^[a-z0-9][a-z0-9+.-]*$/ && $3 ~ /^[a-z0-9][a-z0-9+.-]*$/ && $4 ~ /^[0-9A-Za-z.+~:-]+$/ && $6 ~ /^[0-9]+ [1-9][0-9]*$/) { print FNR ": " $0 }' "$f"
+  [ -z "$output" ]
+  for p in busybox bash coreutils libc6 util-linux kmod e2fsprogs; do
+    grep -q "^$p	" "$f" || { echo "no $p"; return 1; }
+  done
+  # the files from no Ubuntu package: NVIDIA's init and firmware
+  grep -q '^# not from Ubuntu: init	.*LicenseRef-NvidiaProprietary' "$f"
+  # the build and the root tree check hold the image's initrd to the hash
+  grep -q 'initrd_sha=$(sed -n '"'"'s/^INITRD_SHA256=//p'"'"' "$target_dir/initrd.sources")' "$repo/build/customize.sh"
+  grep -q 'initrd.sources lists the Ubuntu programs of' "$repo/test/image/jetson-rootfs-check.sh"
+  [ -x "$repo/tools/initrd-sources.py" ]
+}
+
+@test "the plan refuses an initrd.sources of another initrd version" {
+  printf 'nvidia-l4t-initrd\t39.2.2-20261001000000\n' >"$tmp/list"
+  run bash "$sources" plan "$tmp/list" ubuntu-noble
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nvidia-l4t-initrd 39.2.2-20261001000000: targets/jetson-orin/initrd.sources lists the initrd of 39.2.1-20260806224157"* ]]
 }

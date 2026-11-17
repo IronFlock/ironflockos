@@ -294,8 +294,10 @@ source of every package in its images next to them:
   `public_sources.tbz2` of the L4T release, the `libnvidia-container` source
   of the Jetson toolkit's tag, [below](#jetson)); or no source, with the
   reason (Apache-2.0, MIT, NVIDIA's binary driver, the NVIDIA Driver License
-  Agreement), only for software under no copyleft licence. `open` marks a
-  source nobody has decided yet; it fails the release.
+  Agreement), only for software under no copyleft licence. `initrd` takes
+  the Ubuntu source packages that `targets/jetson-orin/initrd.sources` lists
+  for NVIDIA's initrd ([below](#jetson)). `open` marks a source nobody has
+  decided yet; it fails the release.
   A source package in neither the archives nor that file fails the release,
   so a new repository needs a decision there first.
 - The files go to the pool `ironflockos/sources/<archive>/<source>/<file>`
@@ -391,6 +393,18 @@ With the switch on:
   download (2026-11-17, 309,583,176 bytes). The plan fails when a package's
   version is not the one its source is pinned for. `SOURCES` names the
   mirror's files for each package.
+- NVIDIA's initrd (`nvidia-l4t-initrd`'s `/boot/initrd`, which the image
+  boots) carries Ubuntu 24.04 programs that NVIDIA does not name: 100 of its
+  106 files come from 57 Ubuntu binary packages (41 source packages, among
+  them BusyBox, bash, coreutils, util-linux, glibc); its `init` is NVIDIA's.
+  `tools/initrd-sources.py` finds each file's package and version by
+  content: the file's SHA-256 against the same path in every arm64 package
+  Ubuntu published for noble (Contents-arm64, Launchpad's publishing
+  history). `targets/jetson-orin/initrd.sources` records the result with the
+  initrd's SHA-256; the build fails when the image's `/boot/initrd` is
+  another, so a new L4T pin needs the list made anew. The `sources` job
+  publishes those source packages as it does the image's own Ubuntu
+  packages.
 - The FreeRTOS statement in the image
   (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source
   at `<DL_BASE>/ironflockos/sources/l4t-<L4T version>/` and names
@@ -490,13 +504,6 @@ The pool gives both identities to runs on `v*` tags. Nothing else of
   Since [ADR-0019](adr/0019-every-test-runs-before-the-merge.md) it would
   have to run before the merge, where no bundle of the release carries the
   release signature and no catalog names it; how is open.
-- **The source of NVIDIA's initrd.** `nvidia-l4t-initrd`'s `/boot/initrd`,
-  which the Jetson image boots, carries programs of Ubuntu 24.04 under the
-  GPL and LGPL (BusyBox, bash, coreutils, util-linux, e2fsprogs, kmod,
-  nfs-utils, the ISC DHCP client, glibc and others), copied by NVIDIA
-  without a list of their package versions; `public_sources.tbz2` does not
-  hold them. `release/sources` marks it `open`, so a release with Jetson
-  files stops at `verify` until it is decided.
 - **The flash package and the SD image.** Never published: the review's
   questions 1 and 2 were answered with "not relied on" and "not
   distributed" ([jetson-licence-review.md](jetson-licence-review.md)).
