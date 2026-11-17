@@ -26,7 +26,8 @@
 # DL_BASE/ironflockos/sources/ (archive: debian, raspberrypi, ubuntu or
 # upstream), or l4t-<L4T version>/<file> for the sources a Jetson release
 # mirrors from NVIDIA (l4t_sources_dir in build/lib.sh); the hash
-# "SHA256:<hex>", "SHA1:<hex>" or "-" (an upstream tarball). A source
+# "SHA512:<hex>" (apt's for Ubuntu's archive), "SHA256:<hex>", "SHA1:<hex>"
+# or "-" (an upstream tarball). A source
 # package whose source is not published has "-" for pool path, URL and hash
 # and its reason as the note.
 #
