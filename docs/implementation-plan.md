@@ -737,8 +737,9 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   file system with other firmware, and the kernel runs on the firmware's device tree). `tegra-capsule` writes `TegraPlatformSpec` and
   `TegraPlatformCompatSpec` itself when it stages (the firmware matches the
   capsule's images by them), so `nv-l4t-bootloader-config` stays masked. The window
-  is `/data/ironflockos/maintenance.conf`, a contract the device-agent and Studio
-  have yet to implement. The capsule is chosen by `COMPATIBLE_SPEC` of
+  is `/data/ironflockos/maintenance.conf`, the image's provisional side only: the
+  maintenance window is a platform feature with a plan of its own, not part of this
+  plan (Marko, 2026-11-17). The capsule is chosen by `COMPATIBLE_SPEC` of
   `/etc/nv_boot_control.conf`, which a device cannot make by itself (the board
   configuration is the flash's): the flash kit puts `flash.sh`'s file onto the ESP, and
   `tegra-board-conf` copies it to `/etc` at every boot. Details: `docs/targets/jetson-orin.md`, "Boot firmware

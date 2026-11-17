@@ -9,6 +9,7 @@
 | [testing.md](testing.md) | Unit tests, the QEMU image test, the hardware checklist |
 | [signing.md](signing.md) | The RAUC PKI in Cloud KMS: creating it, how releases sign, renewal |
 | [jetson-licence-review.md](jetson-licence-review.md) | What the Jetson images redistribute from NVIDIA, under which terms, what IronFlockOS does to meet them, and the questions for IronFlock's legal check |
+| [jetson-licence-research.md](jetson-licence-research.md) | Evidence for those questions, collected on 2026-11-17: the licence and policy texts, NVIDIA's and Canonical's public statements, what other Jetson distributors visibly do, EU, German and US export rules; drafts of the questions to NVIDIA and Canonical. Not legal advice |
 | [release.md](release.md) | How a release runs: build, sign, test, stage, promote, the signed catalog, the tag; the one-time setup |
 | [manifest.schema.json](manifest.schema.json) | The release catalog `dl/ironflockos/manifest.json` the device-agent and FlockFlasher read (ADR-0009), with an [example](manifest.example.json) |
 | [targets/amd64-efi.md](targets/amd64-efi.md), [arm64-efi.md](targets/arm64-efi.md), [rpi-arm64.md](targets/rpi-arm64.md), [jetson-orin.md](targets/jetson-orin.md) | Target notes and tested hardware |

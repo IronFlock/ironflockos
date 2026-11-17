@@ -203,7 +203,8 @@ build time that it is the BSP pin's L4T release, and writes the FreeRTOS
 statement it needs). With an update, `rauc-post-install` has
 `tegra-capsule` stage it on the ESP when the boot chain of the slot just
 written has another release, and the capsule's reboot switches the slot. It
-does so only inside the platform's maintenance window, a device setting:
+does so only inside the platform's maintenance window (a platform feature that
+is not built yet and gets its own plan; the file is provisional), a device setting:
 `/etc/ironflockos/maintenance.conf`, which links to
 `/data/ironflockos/maintenance.conf` (`boot-firmware=yes`, optionally
 `until=<seconds since 1970>`; no file: closed). Without the window an update

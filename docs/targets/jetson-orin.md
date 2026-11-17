@@ -472,8 +472,11 @@ waits for a window.
 
 A device setting from the platform, off by default:
 `/etc/ironflockos/maintenance.conf`, which links to
-`/data/ironflockos/maintenance.conf`. The contract for the device-agent and
-Studio (neither implements it yet):
+`/data/ironflockos/maintenance.conf`. Nothing in the platform writes it: the
+maintenance window is a feature of the whole platform and gets its own plan
+(Marko, 2026-11-17). Until then this file is the image's provisional side
+only, and that plan may replace it. Without the file no capsule is ever
+staged. What the image reads today:
 
 ```ini
 boot-firmware=yes    # yes: an OS update may update the boot firmware; no (default)

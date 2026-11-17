@@ -9,6 +9,11 @@ This document is not legal advice. It collects what the licence texts of Jetson 
 r39.2.1 say, what IronFlockOS distributes, and what IronFlockOS does to meet the terms. The
 texts were read from the files NVIDIA ships, not from summaries.
 
+Evidence for the eight questions at the end (primary texts, NVIDIA's and Canonical's
+public statements, what other distributors visibly do, export rules) is collected in
+[jetson-licence-research.md](jetson-licence-research.md) (2026-11-17). It answers none
+of them; it says where the evidence points and what to ask whom.
+
 ## What was read
 
 - The **NVIDIA Driver License Agreement**: the BSP's
@@ -18,8 +23,9 @@ texts were read from the files NVIDIA ships, not from summaries.
   `copyright` file of every `nvidia-l4t-*` package IronFlockOS installs carries the same
   text, and so does `/usr/share/doc/nvidia-l4t-core/`. NVIDIA's JetPack EULA page
   names the same agreement (v. 2023-11-23) for "JetPack OS". Its section 1.1(d) says
-  "operating systems", while the r39.2.1 copy says "operating system kernels"; this
-  review uses the r39.2.1 copy.
+  "operating systems", while the r39.2.1 copy (v. 2025-02-25) says "operating system
+  kernels"; this review uses the r39.2.1 copy. That copy names NVIDIA's contact for
+  questions about the Agreement, `driver-licensing@nvidia.com` (section 20).
 - The per-component `LICENSE.*` and `NOTICE.*` files of the 22 packages in
   `targets/jetson-orin/packages`, of `nvidia-l4t-bootloader`, and of the BSP tarball
   (`bootloader/`, `kernel/`, `generate_capsule/`, `tools/`, `nv_tegra/`).
@@ -52,7 +58,7 @@ The section numbers are those of the r39.2.1 text.
 | Section | Says | For IronFlockOS |
 |---------|------|-------------|
 | 1.1(d) | You may distribute the SOFTWARE for use with operating system kernels under an OSI-approved open source licence, provided that (i) the binary files are not modified in any way (except for uncompressing compressed files) and (ii) this Agreement is provided to each SOFTWARE recipient | This is the grant IronFlockOS depends on. Linux is GPLv2, so it qualifies. NVIDIA's binaries must stay unchanged, and everyone who gets an image must get the Agreement |
-| 1.1(b) | You may modify and create derivative works of the parts NVIDIA delivers in source code form | IronFlockOS's fix to two of NVIDIA's flash scripts and the layout it generates from NVIDIA's XML are such changes (question 2) |
+| 1.1(b) | You may modify and create derivative works of the parts NVIDIA delivers in source code form | The layout IronFlockOS generates from NVIDIA's XML (`LicenseRef-NvidiaProprietary`) is such a change (question 2). The two flash scripts IronFlockOS fixes are not under this section: in r39.2.1 they carry `SPDX-License-Identifier: MIT` (`l4t_initrd_flash.func`, `l4t_create_images_for_kernel_flash.sh`) |
 | 2.1 | Only for NVIDIA's chips (the "NVIDIA Platform"); firmware only on them | The packages go only into `jetson-orin` images, and `nvidia-l4t-core` refuses other boards |
 | 2.2, 2.3, 2.4 | No reverse engineering, no changes to or derivative works of binaries, no modified headers | |
 | 2.5 | Keep copyright and proprietary notices; a modified file must carry a prominent notice that it was changed | `/usr/share/doc/nvidia-l4t-*` stays in the image |
@@ -62,6 +68,7 @@ The section numbers are those of the r39.2.1 text.
 | 2.10 | Not tested or certified for Critical Applications (avionics, navigation, autonomous vehicles, automotive, military, medical, life support); the licensee is responsible for safety and redundancy | Applies to IronFlock's customers |
 | 2.11 | The licensee defends and indemnifies NVIDIA against claims from products or services developed with or using the SOFTWARE | A business risk for IronFlock |
 | 7 | Ends automatically on a breach; earlier distributions are not affected | |
+| 14, 18 | No assignment without NVIDIA's written consent; the Agreement changes only in a writing signed by both parties | A forum answer by NVIDIA's staff changes nothing; a written confirmation would (questions 1, 2, 8) |
 | 8 | Cooperate with NVIDIA to verify compliance | |
 | 12 | NVIDIA's liability is limited to US$5 | |
 | 15 | Comply with export, import and sanctions law | |
@@ -106,10 +113,14 @@ uses Canonical's binaries from `ports.ubuntu.com`.
    Devices that update over the air get it inside the bundle (WP-6.8).
 3. **IronFlockOS mirrors NVIDIA's sources.** Each Jetson release puts NVIDIA's
    `public_sources.tbz2` of its L4T version, and the `libnvidia-container` source of its
-   tag, on the download server (`ironflockos/sources/l4t-<version>/`). This is IronFlock's
-   own source offer. Passing on NVIDIA's offer (GPLv2 section 3(c)) is allowed only for
-   noncommercial distribution. The same mirror holds FreeRTOS for the capsule's offer
-   (WP-6.8).
+   tag, on the download server (`ironflockos/sources/l4t-<version>/`). For files
+   downloaded from that server this is more than an offer: source at the same place
+   counts as distributing the source (GPLv2 section 3, last paragraph). The other
+   channels (the appliance's OS mirror, updates over the air, FlockFlasher, devices a
+   partner installs) need the source at their place too, or IronFlock's written offer,
+   valid three years (question 6). Passing on NVIDIA's offer (GPLv2 section 3(c)) is
+   allowed only for noncommercial distribution. The same mirror holds FreeRTOS for the
+   capsule's offer (WP-6.8).
 4. **IronFlockOS does not publish the flash package.** CI still makes it on every pull request
    as a test. Users get a flash kit instead: IronFlockOS's own scripts. On the flashing host,
    the kit downloads the pinned BSP from NVIDIA, checks it against the SHA-256 in
@@ -160,10 +171,10 @@ written permission.
 | # | Question | If no |
 |---|----------|-------|
 | 1 | Are images that NVIDIA's own tools make from unchanged BSP binaries "binary files not modified" under 1.1(d)? This covers signed or packed binaries, BCTs, partition images and capsules | Flash kit only; no SD image; capsules only from `nvidia-l4t-bootloader` |
-| 2 | May IronFlockOS distribute two of NVIDIA's flash scripts with its `-r` fix, and a layout generated from NVIDIA's XML, if they carry change notices (1.1(b), 2.5)? | The flash kit applies the fix and makes the layout on the user's host, as CI does |
+| 2 | May IronFlockOS distribute two of NVIDIA's flash scripts with its `-r` fix, and a layout generated from NVIDIA's XML, if they carry change notices (1.1(b), 2.5)? In r39.2.1 the two scripts are MIT-licensed, so the open part is whether the MIT header governs them (the Agreement's section 6) and the layout, which comes from a proprietary file | The flash kit applies the fix and makes the layout on the user's host, as CI does |
 | 3 | Is the Agreement next to the download, in FlockFlasher and in the image enough for "provided to each SOFTWARE recipient"? Does FlockFlasher need an acceptance step? What about devices that partners sell with IronFlockOS already installed? The flash kit asks for acceptance, and also takes `--accept-nvidia-license` for runs without a terminal: it still prints the Agreement in full, but nobody answers a question. Is that flag an acceptance by the recipient? | FlockFlasher asks for acceptance; partners pass the Agreement on; the kit drops the flag and always asks |
-| 4 | Does IronFlock accept the indemnity (2.11)? Do its customer terms pass the exclusion of Critical Applications (2.10) on for Jetson devices? | Customer terms change before the first Jetson release |
-| 5 | How are the Jetson images classified for export control (15)? NVIDIA's proprietary parts are not publicly available open source. Does the download server need restrictions for embargoed destinations? | Jetson files go behind the restriction the answer names |
+| 4 | Does IronFlock accept the indemnity (2.11)? Do its customer terms pass the exclusion of Critical Applications (2.10) on for Jetson devices? What changes with the EU's product liability directive 2024/2853, which counts software as a product from 9 December 2026 and allows no exclusion of liability towards injured persons? | Customer terms change before the first Jetson release |
+| 5 | How are the Jetson images classified for export control (15)? NVIDIA's proprietary parts are not publicly available open source, which matters under the US rules that follow US-origin software; the EU's definition of "in the public domain" disregards copyright restrictions. NVIDIA publishes no classification for its Jetson software. Does the download server need restrictions for embargoed destinations? | Jetson files go behind the restriction the answer names |
 | 6 | Is the source mirror (point 3) enough for NVIDIA's GPL and LGPL parts? The same question applies to the Ubuntu and Debian packages of every IronFlockOS image. For FreeRTOS (point 6): the image's statement (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source at the mirror and says IronFlock sends it on request, without naming a contact. Does the offer need a postal or e-mail address, and whose? | As legal sets; the statement names the contact legal gives |
 | 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? | A licence from Canonical, or a userspace IronFlockOS builds itself |
 | 8 | The licence is revocable, and every Jetson device in the field depends on it. Does IronFlock accept that, or does it seek a written distribution agreement with NVIDIA, for example through NVIDIA's partner programme? | |
