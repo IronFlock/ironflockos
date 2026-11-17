@@ -41,8 +41,10 @@ command line, so a version NVIDIA withdraws fails the build.
 
 The repositories' key is `targets/jetson-orin/apt/jetson-ota-public.asc`
 (fingerprint `3C6D1FF3100C8C3ABB0869C0E6543461A9996195`, checked by the unit
-tests). It is the file `nvidia-l4t-apt-source` 39.2.1 ships, byte for byte the
-copy in the pinned BSP tarball, and it signs both repositories' `InRelease`.
+tests). It is the file `https://repo.download.nvidia.com/jetson/jetson-ota-public.asc`
+serves: the key block of the file `nvidia-l4t-apt-source` 39.2.1 ships, without
+that file's licence header (dearmored bytes identical). It signs both
+repositories' `InRelease`.
 
 `nvidia-l4t-bootloader` is in: its UEFI capsules of the QSPI firmware are what
 an OS update brings to the boot chain ("Boot firmware updates" below). Its
@@ -91,6 +93,37 @@ display modules, power model, fan control.
 
 There is no `repart.d` on this target: NVIDIA's flash tools write the whole
 layout, the `data` partition included.
+
+## Names at login
+
+The image is IronFlockOS, based on Ubuntu 24.04. It ships Canonical's packages
+unchanged and shows IronFlockOS's names where Ubuntu's `base-files` puts
+Ubuntu's (WP-6.8; [jetson-licence-review.md](../jetson-licence-review.md),
+point 10):
+
+| File | Says |
+|------|------|
+| `/etc/issue` (the login prompt) | `\S \n \l`: `PRETTY_NAME` of os-release, the host and the terminal, for example `IronFlockOS 0.18.0 (jetson-orin, base) ironflockos ttyTCU0`; the same on every target (`overlay/etc/issue`) |
+| `/etc/issue.net` | `IronFlockOS` |
+| `/etc/motd` | IronFlockOS's banner (`overlay/etc/motd`) |
+| `/etc/lsb-release` | `DISTRIB_ID=IronFlockOS`, `DISTRIB_RELEASE=24.04`, `DISTRIB_CODENAME=noble`, `DISTRIB_DESCRIPTION="IronFlockOS <version>, based on Ubuntu 24.04"` (`build/branding.sh`) |
+| `/usr/lib/os-release` | IronFlockOS's (`build/osrelease.sh`), `ID_LIKE="ubuntu debian"`, no `UBUNTU_*` field and no Ubuntu URL |
+
+`lsb_release` (noble's `lsb-release` 12.0) answers from os-release, not from
+`/etc/lsb-release`: `-i` says `IronFlockOS`, `-d` the `PRETTY_NAME`, `-r` the
+IronFlockOS version, and `-c` says `n/a`, as the image's os-release has no
+`VERSION_CODENAME`. The only reader of `DISTRIB_ID` in the image is NVIDIA's
+`nvidia-bug-report-jetson.sh`, which prints an `apt-get` hint when it says
+`Ubuntu`.
+
+Gone: `/etc/legal` (Ubuntu's notice at the first login), Ubuntu's
+`update-motd.d` scripts (`00-header`, `10-help-text` with Canonical's links,
+`50-motd-news`), and the logos in `/usr/share/pixmaps`. `motd-news.timer` and
+`motd-news.service` are masked, so nothing fetches `motd.ubuntu.com`.
+`ubuntu-pro-client` is not installed: nothing the image lists depends on it,
+and Recommends are not installed. Kept as Ubuntu's: the package names and
+their `ubuntu` version strings, `/etc/dpkg/origins/ubuntu`, the apt sources
+and Ubuntu's archive keyring.
 
 ## Booting a slot
 
@@ -866,7 +899,9 @@ the `.flock` and `nv_boot_control.conf` on the ESP, and the archive.
 checks it: the versions, the sources and pins, kernel, initrd and `nvgpu`,
 units and masks, the RAUC backend and the health gate's timer, the capsules
 (unchanged against the package's checksums), the FreeRTOS statement and the
-boot firmware report, the baked agent and the `nvidia` runtime. Given the
+boot firmware report, the baked agent and the `nvidia` runtime, the
+`copyright` file of every installed `nvidia-l4t-*` package, and the names at
+login ([above](#names-at-login)). Given the
 bundle as well, it checks that the bundle's `rootfs.ext4` carries the
 capsules, the statement and `tegra-capsule`. It also runs the tree's binaries in a chroot:
 dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
@@ -897,10 +932,13 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
   Driver License Agreement: NVIDIA's binaries may be redistributed only
   unchanged, and every recipient must get the Agreement. What follows for this
   target:
-  - the build keeps NVIDIA's packages and their `/usr/share/doc` unchanged
-    (a rootfs check will enforce it);
-  - `apt/jetson-ota-public.asc` is replaced with the key as
-    `repo.download.nvidia.com` serves it, without NVIDIA's licence header;
+  - the build keeps NVIDIA's packages and their `/usr/share/doc` unchanged;
+    the rootfs check fails when an installed `nvidia-l4t-*` package has no
+    `copyright` file (built);
+  - `apt/jetson-ota-public.asc` is the key as `repo.download.nvidia.com`
+    serves it, without NVIDIA's licence header (built);
+  - the image shows IronFlockOS's names, not Ubuntu's, and keeps Ubuntu's
+    technical references (built, [Names at login](#names-at-login));
   - the flash package stays a CI test, and users get the flash kit, which
     downloads the BSP and the Agreement from NVIDIA and asks for acceptance
     (WP-6.4, [Flashing a module](#flashing-a-module));

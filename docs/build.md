@@ -60,6 +60,27 @@ Artefacts land in `out/<image-id>/`:
 | `<image-id>-<version>.modules.alias.gz` | the hardware list: per kernel of the image, the `alias` lines of `modules.alias` and `modules.builtin.modinfo` and a `builtin <module>` line per driver of `modules.builtin`, which `ironflock os install` matches a machine against ([release.md](release.md#what-ironflock-os-install-reads)); not for Jetson, which has no disk image |
 | `SHA256SUMS` | checksums of the image and the bundle |
 
+### Identity
+
+Every image names itself IronFlockOS, whatever its distribution.
+`build/osrelease.sh` writes `/usr/lib/os-release` (`NAME="IronFlockOS"`,
+`ID=ironflockos`, `ID_LIKE` from the distribution). The login prompt is the same on
+every target: `overlay/etc/issue` is `\S \n \l`, which agetty shows as the
+os-release's `PRETTY_NAME`, the host name and the terminal, for example
+`IronFlockOS 0.18.0 (amd64-efi, base) ironflockos tty2`. `/etc/issue.net` says
+`IronFlockOS`, and `/etc/motd` is the overlay's banner. Before, the Debian images
+showed Debian's prompt (`Debian GNU/Linux 13`).
+
+`build/branding.sh`, run by `customize.sh` after os-release, handles what only
+Ubuntu's `base-files` ships with Ubuntu's name in it ([jetson-orin](targets/jetson-orin.md#names-at-login)):
+`/etc/lsb-release` gets `DISTRIB_ID=IronFlockOS` and `DISTRIB_DESCRIPTION="IronFlockOS
+<version>, based on Ubuntu 24.04"`, its release and codename stay; `/etc/legal`,
+Ubuntu's `update-motd.d` scripts and logos go, and `customize.sh` masks
+`motd-news.timer`. A Debian tree has none of these files. The build fails when
+`/etc/issue` or `/etc/issue.net` names Debian or Ubuntu, or a script in
+`/etc/update-motd.d` names Ubuntu or Canonical. Package names, version strings, `/etc/dpkg/origins/`, the apt sources
+and the archive keyrings stay the distribution's.
+
 ## Disk layout on a device
 
 The image holds the IRONFLOCKOS partition and slot A only. On the first boot

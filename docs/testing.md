@@ -27,7 +27,9 @@ with a reason and an expiry date.
 
 `test/unit/*.bats` cover the build library (`build/lib.sh`: configuration
 parsing that never runs code, templates without holes, sizes, the matrix axes),
-the os-release contract, the target templates (GRUB A/B contract, RAUC
+the os-release contract, the distribution's names (`branding.bats`:
+`build/branding.sh` against trees shaped as Ubuntu's and Debian's `base-files` leave
+them, and the overlay's `/etc/issue`), the target templates (GRUB A/B contract, RAUC
 `system.conf`, slot sizes), `build/bake.sh` against a fake download base (the
 pinned `ironflock`, its signature, what `ironflock bake` must leave), and the
 image's own scripts in `overlay/usr/lib/ironflockos` run against a temporary
@@ -547,7 +549,14 @@ the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 agent and Docker's `nvidia` runtime, and the boot firmware lane: NVIDIA's
 capsules in `/opt/ota_package/t23x` unchanged against the package's
 checksums, the FreeRTOS statement, NVIDIA's licence texts, `tegra-capsule`,
-its report unit and the maintenance window's link. It also runs the tree's
+its report unit and the maintenance window's link. It checks that every installed
+`nvidia-l4t-*` package has its `copyright` file (following a doc directory that links
+to another package's), and the names at login: os-release without `UBUNTU_*` fields
+or Ubuntu URLs, the overlay's `/etc/issue` and `/etc/issue.net`, `lsb-release` with
+`DISTRIB_ID=IronFlockOS` and Ubuntu's release and codename, no `/etc/legal`, no Ubuntu
+logo, no `update-motd.d` script that names Ubuntu or Canonical, nothing that fetches
+`motd.ubuntu.com`, `motd-news.timer` masked, no `ubuntu-pro-client` and
+`/etc/dpkg/origins/ubuntu` kept. It also runs the tree's
 binaries in a chroot, the backend, `tegra-capsule` and `tegra-board-conf`
 among them
 (`docs/targets/jetson-orin.md`). Given the bundle as a second argument, as CI

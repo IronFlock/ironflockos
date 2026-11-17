@@ -108,7 +108,7 @@ decision), in progress.
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | built (NVIDIA's own capsules from `nvidia-l4t-bootloader`, the build's lock-step check, `tegra-capsule` staged from `rauc-post-install`, the maintenance window file, the report after the restart, the FreeRTOS statement; unit tests against fakes of the firmware); open: a capsule update on a module (WP-6.6), the window's device-agent and Studio side, generated capsules for other carriers (WP-6.8) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
 | 6.7 | Follow-up: Jetson RT kernel | ironflockos | 5 | 6.6, 4b.1 | open |
-| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | open (review done 2026-11-07; the sign-off is IronFlock's legal check) |
+| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | built: the rootfs check for the `copyright` files of NVIDIA's packages, NVIDIA's apt key as NVIDIA serves it, IronFlockOS's names in place of Ubuntu's (login prompt, `lsb-release`, no Ubuntu banner, legal notice, motd-news or logo); open: the Agreement next to the Jetson files, the source mirror, FlockFlasher's licence screen, the contact in the source offers, the legal sign-off (review done 2026-11-07; the sign-off is IronFlock's legal check) |
 | 7.1 | `arm64-efi` target and installer payload | ironflockos | 3 | 1.5 | done (#161; arm64-efi installer #172) |
 | 7.2 | ReswarmOS migration guide and sunset | ironflockos, GCS, flasher, device-agent | 2 | 2.10 | open |
 | 7.3 | Documentation refresh and review | ironflockos | 3 | 7.1, 7.2 | open |
@@ -775,11 +775,28 @@ Only after CUDA on the RT kernel is verified on the chosen JetPack release: `nvb
     package has no `/usr/share/doc/<package>/copyright`;
   - `targets/jetson-orin/apt/jetson-ota-public.asc` replaced with the key as
     `repo.download.nvidia.com` serves it (same key block, no NVIDIA licence header);
+  - the Ubuntu-based image shows IronFlockOS's names where Ubuntu's base-files puts
+    Ubuntu's (`/etc/issue`, `/etc/issue.net`, `/etc/lsb-release`, `/etc/legal`,
+    `/etc/update-motd.d`) and fetches nothing from `motd.ubuntu.com`; it keeps the
+    technical references (the review's "Ubuntu" paragraph; research, question 7);
   - the review's eight questions answered by IronFlock's legal check, and the answers
     recorded in the review.
 - Acceptance: a dry run of the release publishes the Agreement and the source mirror
   next to the Jetson files; the rootfs check fails on a tree without the copyright
   files; the legal sign-off is recorded in the review and in ADR-0008.
+- As built (2026-11-17): the rootfs check fails when an installed `nvidia-l4t-*`
+  package has no `copyright` file, following a doc directory that links to another
+  package's. The key file is the one NVIDIA serves: the same key block as
+  `nvidia-l4t-apt-source` 39.2.1, dearmored bytes identical, without the header; a
+  unit test checks it has none. Every image's login prompt is IronFlockOS's
+  (`overlay/etc/issue`); `build/branding.sh` gives the Ubuntu-based image
+  `DISTRIB_ID=IronFlockOS` and `DISTRIB_DESCRIPTION="IronFlockOS <version>, based on
+  Ubuntu 24.04"`, removes `/etc/legal`, Ubuntu's three `update-motd.d` scripts and the
+  logos in `/usr/share/pixmaps`, and `customize.sh` masks `motd-news.timer`. Release, codename, `ID_LIKE`, package names,
+  version strings, `/etc/dpkg/origins/ubuntu`, the apt sources and the keyring stay.
+  `ubuntu-pro-client` is not in the tree (nothing listed depends on it; the rootfs
+  check asserts it). Open: the Agreement next to the Jetson files, the source mirror,
+  FlockFlasher's licence screen, the contact in the source offers, the legal sign-off.
 
 ## Phase 7: Generic arm64 EFI, decommission, documentation
 

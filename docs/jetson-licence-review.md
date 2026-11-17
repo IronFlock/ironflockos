@@ -42,7 +42,7 @@ of them; it says where the evidence points and what to ask whom.
 | Flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` | None: IronFlockOS's scripts, which download the BSP and the Agreement from NVIDIA on the user's host (point 4) | Download server `ironflockos/<version>/`, with the first Jetson release | Built in CI (WP-6.4), not published |
 | Orin Nano SD image | The same for an SD card: kernel, DTB, ESP with L4TLauncher, recovery | FlockFlasher (WP-6.4) | Planned |
 | QSPI capsules `TEGRA_BL_*.Cap` | The bootloader binaries (MB1, MB2, BPMP, SPE, RCE, UEFI, OP-TEE, TF-A) in one capsule per carrier board, NVIDIA's own from `nvidia-l4t-bootloader` | In the slot image and the bundle (`/opt/ota_package/t23x`, WP-6.5) | Built in CI (WP-6.5) |
-| Repository | `targets/jetson-orin/apt/jetson-ota-public.asc`, NVIDIA's key file with the header `LicenseRef-NvidiaProprietary` | GitHub, public, Apache-2.0 | Now |
+| Repository | `targets/jetson-orin/apt/jetson-ota-public.asc`, NVIDIA's apt key as `repo.download.nvidia.com` serves it, without a licence header (point 7) | GitHub, public, Apache-2.0 | Now |
 
 IronFlockOS does not distribute NVIDIA's sample root filesystem (ADR-0008). It also does not
 distribute the JetPack SDK components (CUDA toolkit, cuDNN, TensorRT). These have their
@@ -96,13 +96,13 @@ be redistributed only if Canonical approves, certifies or provides it. Otherwise
 Ubuntu trademarks must be removed and replaced, and the binaries recompiled. The policy
 also says that Ubuntu is an aggregate work, and that it does not reduce the rights the
 licences of its packages grant. IronFlockOS's `jetson-orin` image carries IronFlockOS's name and
-uses Canonical's binaries from `ports.ubuntu.com`. Its `os-release` is IronFlockOS's own
-(`ID_LIKE="ubuntu debian"`). It still takes these files from Ubuntu's packages, with
-Ubuntu's name in them: `/etc/lsb-release`, `/etc/issue`, `/etc/issue.net`, `/etc/legal`
-and the scripts in `/etc/update-motd.d`. Systems built from Ubuntu's binaries replace
-them with their own and keep the technical references (the codename, the `ubuntu`
-version strings, the package names); the image does the same before the first Jetson
-release (WP-6.8; [research](jetson-licence-research.md), question 7).
+uses Canonical's binaries from `ports.ubuntu.com`, unchanged. Its `os-release` is IronFlockOS's own
+(`ID_LIKE="ubuntu debian"`). Ubuntu's `base-files` puts Ubuntu's name into
+`/etc/lsb-release`, `/etc/issue`, `/etc/issue.net`, `/etc/legal` and the scripts in
+`/etc/update-motd.d`. Systems built from Ubuntu's binaries replace these with their own
+and keep the technical references (the codename, the `ubuntu` version strings, the
+package names). The image does the same (point 10; WP-6.8;
+[research](jetson-licence-research.md), question 7).
 
 ## What IronFlockOS does
 
@@ -112,7 +112,9 @@ release (WP-6.8; [research](jetson-licence-research.md), question 7).
    `-apt-source` and `-configs` (target notes). The build excludes no
    documentation, so `/usr/share/doc/nvidia-l4t-*` keeps the Agreement and the notices.
    A check in `test/image/jetson-rootfs-check.sh` makes this a rule: every installed
-   `nvidia-l4t-*` package has its `copyright` file (WP-6.8).
+   `nvidia-l4t-*` package has its `copyright` file, also where its doc directory links
+   to another package's (built, WP-6.8). At the pins, each of the 20 `nvidia-l4t-*`
+   packages the image installs has its own `copyright`.
 2. **The Agreement goes with every Jetson file.** NVIDIA's text, byte for byte the BSP's,
    is published as `NVIDIA-LICENSE.txt` next to the Jetson files in `ironflockos/<version>/`.
    The release notes link it. FlockFlasher shows it before it writes a Jetson image.
@@ -157,16 +159,42 @@ release (WP-6.8; [research](jetson-licence-research.md), question 7).
    statement to `/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt` and fails when a
    capsule's version is not the BSP pin's (`build/tegra-capsules.sh`).
 7. **The repository holds no file under NVIDIA's licence.** NVIDIA's layout files stay
-   out already. `jetson-ota-public.asc` is replaced with the key as NVIDIA serves it at
-   `https://repo.download.nvidia.com/jetson/jetson-ota-public.asc`. That file has the
-   same key block and the same fingerprint, `3C6D1FF3100C8C3ABB0869C0E6543461A9996195`,
-   and no licence header (WP-6.8).
+   out already. `jetson-ota-public.asc` is the key as NVIDIA serves it at
+   `https://repo.download.nvidia.com/jetson/jetson-ota-public.asc`: the same key block
+   as `nvidia-l4t-apt-source` 39.2.1 (dearmored bytes identical), the same fingerprint,
+   `3C6D1FF3100C8C3ABB0869C0E6543461A9996195`, and no licence header. A unit test
+   checks that the file has none (built, WP-6.8).
 8. **Names, not logos.** IronFlockOS's documents and FlockFlasher name the boards in text,
    for example "NVIDIA Jetson Orin Nano Developer Kit". They show no NVIDIA logos and say
    nothing that suggests NVIDIA provides or supports IronFlockOS.
 9. **No PVA or FreeRTOS figures.** IronFlockOS publishes no performance data of the PVA
    firmware or of FreeRTOS on the SPE. The real-time figures of WP-6.7 measure Linux on
    the CPU cores.
+10. **IronFlockOS's name, Ubuntu's technical references.** The image follows what
+    systems built from Ubuntu's binaries visibly do. It ships Canonical's binary
+    packages unchanged and replaces the visible Ubuntu branding with its own. Where the
+    base is named, the text is "IronFlockOS, based on Ubuntu 24.04". As built
+    (`build/branding.sh`, `overlay/etc/issue`; WP-6.8):
+    - the login prompt shows `os-release`'s `PRETTY_NAME`, for example "IronFlockOS
+      0.18.0 (jetson-orin, base)"; `/etc/issue.net` says "IronFlockOS". Every target
+      has the same prompt;
+    - `/etc/lsb-release` has `DISTRIB_ID=IronFlockOS` and
+      `DISTRIB_DESCRIPTION="IronFlockOS <version>, based on Ubuntu 24.04"`;
+      `DISTRIB_RELEASE=24.04` and `DISTRIB_CODENAME=noble` stay. Nothing in the image
+      needs `DISTRIB_ID=Ubuntu`: `lsb_release` answers from `os-release`, and NVIDIA's
+      `nvidia-bug-report-jetson.sh` reads the ID only to print an install hint;
+    - `/etc/legal` and Ubuntu's `update-motd.d` scripts (header, help text with
+      Canonical's links, motd-news) are gone, `motd-news.timer` is masked, and nothing
+      fetches `motd.ubuntu.com`. The login banner is IronFlockOS's `/etc/motd`;
+    - `ubuntu-pro-client` is not installed: nothing the image lists depends on it, and
+      Recommends are not installed;
+    - kept: `ID_LIKE="ubuntu debian"`, the package names, the `ubuntu` version
+      strings, `/etc/dpkg/origins/ubuntu`, the apt sources at `ports.ubuntu.com` and
+      Ubuntu's archive keyring;
+    - no Ubuntu logo: the image has no Plymouth theme or desktop on Jetson, and the
+      build removes the logos `base-files` puts into `/usr/share/pixmaps`.
+
+    `test/image/jetson-rootfs-check.sh` checks each of these on the built tree.
 
 ## Questions for legal
 
@@ -182,7 +210,7 @@ written permission.
 | 4 | Does IronFlock accept the indemnity (2.11)? Do its customer terms pass the exclusion of Critical Applications (2.10) on for Jetson devices? What changes with the EU's product liability directive 2024/2853, which counts software as a product from 9 December 2026 and allows no exclusion of liability towards injured persons? | Customer terms change before the first Jetson release |
 | 5 | How are the Jetson images classified for export control (15)? NVIDIA's proprietary parts are not publicly available open source, which matters under the US rules that follow US-origin software; the EU's definition of "in the public domain" disregards copyright restrictions. NVIDIA publishes no classification for its Jetson software. Does the download server need restrictions for embargoed destinations? | Jetson files go behind the restriction the answer names |
 | 6 | Is the source mirror (point 3) enough for NVIDIA's GPL and LGPL parts? The same question applies to the Ubuntu and Debian packages of every IronFlockOS image. For FreeRTOS (point 6): the image's statement (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source at the mirror and says IronFlock sends it on request, without naming a contact. Does the offer need a postal or e-mail address, and whose? | As legal sets; the statement names the contact legal gives |
-| 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? Canonical's written position keeps a licence or a rebuild for a commercial, own-named image of classic Ubuntu packages (its founder set such device images apart from Ubuntu Core in 2016), and it has never said which marks must go. Many systems, commercial ones included, ship the unchanged binaries under their own names with the visible branding replaced, without a published agreement, and no enforcement against them is known: tolerance, not permission. Does IronFlock rely on that, or ask Canonical? | A licence from Canonical (it sells one for devices), or a userspace IronFlockOS builds itself |
+| 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? Canonical's written position keeps a licence or a rebuild for a commercial, own-named image of classic Ubuntu packages (its founder set such device images apart from Ubuntu Core in 2016), and it has never said which marks must go. Many systems, commercial ones included, ship the unchanged binaries under their own names with the visible branding replaced, without a published agreement, and no enforcement against them is known: tolerance, not permission. Does IronFlock rely on that, or ask Canonical? As built, the image replaces the visible branding and keeps the technical references (point 10) | A licence from Canonical (it sells one for devices), or a userspace IronFlockOS builds itself |
 | 8 | The licence is revocable, and every Jetson device in the field depends on it. Does IronFlock accept that, or does it seek a written distribution agreement with NVIDIA, for example through NVIDIA's partner programme? | |
 
 ## Sources
