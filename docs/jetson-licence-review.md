@@ -138,7 +138,9 @@ package names). The image does the same (point 10; WP-6.8;
    counts as distributing the source (GPLv2 section 3, last paragraph). The other
    channels (the appliance's OS mirror, updates over the air, FlockFlasher, devices a
    partner installs) need the source at their place too, or IronFlock's written offer,
-   valid three years (question 6). Passing on NVIDIA's offer (GPLv2 section 3(c)) is
+   valid three years (question 6). Every image carries that offer from 0.19.0 on, at the
+   end of `/usr/share/doc/ironflockos/copyright` (`release/source-offer.txt`; IronFlock's
+   decision of 2026-11-17). Passing on NVIDIA's offer (GPLv2 section 3(c)) is
    allowed only for noncommercial distribution. The same mirror holds FreeRTOS for the
    capsule's offer (WP-6.8). As built: both files are pinned by URL and SHA-256 in
    `bsp.conf` (NVIDIA publishes no hash for the sources tarball: the pin comes from one

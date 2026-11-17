@@ -69,6 +69,13 @@ ln -sf ../usr/lib/os-release "$ROOT/etc/os-release"
 # The login prompt, lsb-release and the login banner name IronFlockOS, not the
 # distribution (docs/build.md, "Identity"; WP-6.8).
 bash "$here/branding.sh" "$ROOT" "$IRONFLOCKOS_VERSION"
+# The written offer of the GPL and LGPL source, by the contact of the source
+# offers (release/contact), after the directions to SOURCES in the image's
+# copyright file (docs/release.md, "Source code").
+load_contact "$src/release/contact"
+IRONFLOCKOS_VERSION=$IRONFLOCKOS_VERSION render "$src/release/source-offer.txt" >>"$ROOT/usr/share/doc/ironflockos/copyright"
+grep -qF "$CONTACT_EMAIL" "$ROOT/usr/share/doc/ironflockos/copyright" ||
+  die "the image's copyright file does not carry the written source offer (release/source-offer.txt)"
 # Every device generates its own machine-id on its first boot; RAUC's
 # post-install handler carries it into the other slot.
 printf 'uninitialized\n' >"$ROOT/etc/machine-id"

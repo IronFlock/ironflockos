@@ -311,7 +311,14 @@ source of every package in its images next to them:
   Debian source package. `check` makes sure `SOURCES` and the pool answer
   through the download proxy.
 - Each image says where `SOURCES` is in `/usr/share/doc/ironflockos/copyright`, so
-  a copy that is passed on carries the directions too.
+  a copy that is passed on carries the directions too. From 0.19.0 that file
+  ends with IronFlock GmbH's written offer of the GPL and LGPL source
+  (`release/source-offer.txt`, with the contact of `release/contact`): valid
+  for at least three years from the day IronFlock GmbH last distributed the
+  release, in any way, for the channels that are not the download server (an
+  update over the air, an appliance's mirror, a device that came with
+  IronFlockOS installed). Decided by IronFlock on 2026-11-17. A build stops
+  while the contact is incomplete.
 - Releases up to 0.11.0 have no `SOURCES`: their images record no source
   packages.
 

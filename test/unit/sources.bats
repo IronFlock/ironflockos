@@ -184,3 +184,18 @@ fileplan() {
   grep -q '/usr/share/common-licenses/Apache-2.0' "$f"
   grep -qF "$DL_BASE/ironflockos/<VERSION_ID>/SOURCES" "$f"
 }
+
+@test "every image's copyright file ends with IronFlock GmbH's written offer of the GPL and LGPL source" {
+  # shellcheck source=build/lib.sh
+  . "$repo/build/lib.sh"
+  load_contact "$repo/release/contact"
+  run env IRONFLOCKOS_VERSION=9.8.7 bash -c ". '$repo/build/lib.sh'; load_contact '$repo/release/contact'; render '$repo/release/source-offer.txt'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"IronFlockOS 9.8.7"* ]]
+  [[ "$output" == *"For at least three years"* ]]
+  [[ "$output" == *"  IronFlock GmbH"$'\n'"  Taunusanlage 8"$'\n'"  60329 Frankfurt am Main"* ]]
+  [[ "$output" == *"legal@ironflock.com"* ]]
+  [[ "$output" != *@[A-Z]* ]]
+  grep -q 'render "$src/release/source-offer.txt" >>"$ROOT/usr/share/doc/ironflockos/copyright"' "$repo/build/customize.sh"
+  grep -q 'load_contact "$src/release/contact"' "$repo/build/customize.sh"
+}
