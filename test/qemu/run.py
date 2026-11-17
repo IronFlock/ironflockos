@@ -3211,8 +3211,17 @@ class Runner:
 
     def hold_boot_files(self):
         """Nothing in this boot renews the boot files any more: the test sets
-        up a state for the next boot by hand."""
-        self.vm.run("systemctl stop ironflockos-slot-proven.path ironflockos-slot-keep.timer")
+        up a state for the next boot by hand. The units that run
+        ironflockos-boot-script stop being started, and a run they started
+        before (the path unit fires on every change of grubenv, the test's
+        own included) ends first: one that read grubenv before the test's
+        state was complete would take the test's boot-next.cfg for one
+        without a trial and remove it."""
+        self.vm.run("systemctl stop ironflockos-slot-proven.path ironflockos-slot-keep.timer && i=0; "
+                    "while systemctl list-jobs --no-legend --no-pager | "
+                    "grep -qE 'ironflockos-(slot-proven|slot-keep|boot-script)[.]service'; do "
+                    "i=$((i + 1)); [ $i -lt 120 ] || exit 1; sleep 1; done; "
+                    "flock /run/ironflockos/boot-script.lock true", timeout=180)
 
     def restore_boot_files(self):
         """The slot's boot files at their places and no trial (the test's
