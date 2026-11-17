@@ -30,7 +30,11 @@ network profile on the IRONFLOCKOS partition are taken); the splash (docs/build.
 boot is on text, ironflockos.boot=text, as the checks read the serial
 console): Plymouth from the initramfs, the screen read through QMP's
 screendump through the boot and after, a damaged splash.cpio, then the
-device's own picture with its refusals; update into slot B with the bundle of the same build
+device's own picture with its refusals; the boot script (ADR-0022): the partition of a
+device installed with 0.17.0 (its whole grub.cfg) changes over to the loader once the slot is
+proven, the slot's script has one trial and is confirmed, and under KVM three scripts fail their
+trial (a syntax error, no kernel, no root) and the states a power cut leaves boot;
+update into slot B with the bundle of the same build (a boot script staged before goes)
 (while RAUC installs, `os update`, `os rollback` and `os reset` refuse;
 installed, `os rollback` and `os reset` refuse the update that waits for its
 restart; on slot B before it is marked good, `os reset` refuses);
@@ -42,7 +46,9 @@ cleared too;
 fallback: an update into slot A that is never marked good falls back to B,
 and `os rollback` refuses that slot;
 a kernel crash without a connection: the device restarts by itself on a slot
-that has proven itself, and the crash is on record on /data.
+that has proven itself, and the crash is on record on /data; last, on
+amd64-efi base under KVM, the slot of the released 0.17.0 image (downloaded,
+checked against its checksum) boots with this build's boot script.
 
 What ironflock reads and prints along the way (RAUC's status, grubenv, the
 `ironflock os` commands as text and JSON) is kept in <work>/captured/, for
@@ -72,6 +78,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import uuid
 import zlib
 
@@ -1067,6 +1074,26 @@ def put_test_catalog(serve_dir, workdir, image_id, version, artefacts, image):
 
 RAUC_STATUS = ["rauc", "status", "--detailed", "--output-format=json"]
 GRUBENV = "/boot/efi/EFI/BOOT/grubenv"
+# The boot script (ADR-0022): the partition's files, the slot's copies, the
+# tool that brings them there, and where the test keeps scripts of its own
+# for it (IRONFLOCKOS_BOOT_FILES).
+BOOT_DIR = "/boot/efi/EFI/BOOT"
+SLOT_BOOT = "/usr/lib/ironflockos/boot"
+BOOT_SCRIPT_TOOL = "/usr/lib/ironflockos/boot-script"
+CI_BOOT = "/run/ironflockos-ci-boot"
+# 0.17.0's whole grub.cfg (its template, rendered as the build renders it)
+# and the EFI/debian/grub.cfg its build wrote: the partition of a device
+# installed with 0.17.0, for the change-over.
+LEGACY_GRUB_CFG = os.path.join(REPO, "test", "qemu", "fixtures", "grub-0.17.0.cfg")
+LEGACY_DEBIAN_CFG = ("# IronFlockOS: the A/B script is in /EFI/BOOT, next to the boot loader. Debian's\n"
+                     "# GRUB reads it there first; this file is for a GRUB that reads only its\n"
+                     "# prefix, /EFI/debian.\n"
+                     "source ($root)/EFI/BOOT/grub.cfg\n")
+LEGACY_COPY = "/data/ironflockos-ci-grub-0.17.0.cfg"
+# The released 0.17.0 image whose slot the boot script of this build has to
+# boot (amd64-efi base, under KVM), by its published checksum.
+OLD_RELEASE = ("0.17.0", "ironflockos-amd64-efi-base",
+               "b06b3ec391e58265f1f27e5679c83a531cefd6973d9dd681a67f1ec35814b437")
 CACHE = "/var/cache/ironflockos"
 TEST_BUNDLE = f"{CACHE}/test.raucb"
 # RAUC's own word on whether it installs (its D-Bus property Operation).
@@ -1082,6 +1109,33 @@ RAUC_BUSY = "RAUC is installing an update right now"
 # A .flock that waits on the IRONFLOCKOS partition: `os reset` without -c
 # refuses it, `os reset -c` removes it.
 RESET_WAITING = "/boot/efi/ironflockos-ci-waiting.flock"
+
+
+def render_template(path, conf):
+    """A template of the repository with @VAR@ filled in from conf, as
+    build/lib.sh's render does it."""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+
+    def value(m):
+        if m.group(1) not in conf:
+            raise TestFailure(f"{path}: @{m.group(1)}@ has no value")
+        return conf[m.group(1)]
+    return re.sub(r"@([A-Z][A-Z0-9_]*)@", value, text)
+
+
+def gpt_partition(head, number):
+    """Byte offset and size of partition number of the disk whose first
+    bytes are head."""
+    if head[512:520] != b"EFI PART":
+        raise TestFailure("no GPT")
+    entries_lba = int.from_bytes(head[512 + 72:512 + 80], "little")
+    entry_size = int.from_bytes(head[512 + 84:512 + 88], "little")
+    entry = head[entries_lba * 512 + (number - 1) * entry_size:][:entry_size]
+    first, last = int.from_bytes(entry[32:40], "little"), int.from_bytes(entry[40:48], "little")
+    if not first:
+        raise TestFailure(f"no partition {number}")
+    return first * 512, (last - first + 1) * 512
 
 
 def grub_next(env):
@@ -1167,7 +1221,10 @@ class Runner:
         self.vm.run(f"cmp {boot}/{self.conf['EFI_LOADER']} /usr/lib/shim/shim{efi_arch}.efi.signed")
         self.vm.run(f"cmp {boot}/mm{efi_arch}.efi /usr/lib/shim/mm{efi_arch}.efi.signed")
         self.vm.run(f"cmp {boot}/grub{efi_arch}.efi /usr/lib/grub/{grub_format}-signed/grub{efi_arch}.efi.signed")
-        self.vm.run(f"test ! -e {boot}/fb{efi_arch}.efi && grep -q '^source ' /boot/efi/EFI/debian/grub.cfg")
+        self.vm.run(f"test ! -e {boot}/fb{efi_arch}.efi")
+        # ADR-0022: the loader at both of GRUB's paths and the script next
+        # to it are the slot's own, and this boot ran that script.
+        self.boot_files_are_the_slots()
         # fwupd's capsule helper starts through the shim in the OS's folder.
         self.vm.run("systemctl start ironflockos-fwupd-shim.service")
         self.vm.run(f"cmp {boot}/{self.conf['EFI_LOADER']} /boot/efi/EFI/debian/shim{efi_arch}.efi")
@@ -2240,8 +2297,19 @@ class Runner:
         `os rollback`, `os update` and `os reset` refuse (exit code 3) and say
         that RAUC installs; once it is installed and waits for the restart, `os
         rollback` and `os reset` refuse that too and change nothing; on slot B,
-        before it is marked good, `os reset` refuses a system on trial."""
+        before it is marked good, `os reset` refuses a system on trial.
+        ADR-0022: a boot script staged for a trial is cancelled by the
+        install, and nothing is staged again before the restart."""
+        self.vm.run("rauc status mark-good")
+        self.variant_script(100)
+        self.stage_variant(100)
         self.os_while_installing()
+        trial, _ = self.script_trial()
+        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && test -e /run/ironflockos/boot-script.hold")
+        if trial:
+            raise TestFailure(f"the install left the boot script trial {trial!r}")
+        self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
+        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg")
         primary = self.rauc_status().get("boot_primary")
         if primary != "rootfs.1":
             raise TestFailure(f"after the install the primary slot is {primary}, expected rootfs.1")
@@ -3099,6 +3167,277 @@ class Runner:
         if self.booted() != "A":
             raise TestFailure(f"booted {self.booted()} after a crash soon after boot, expected the fallback to A")
 
+    # --- the boot script (ADR-0022) --------------------------------------------
+
+    def booted_script(self):
+        """The version of the boot script that booted this system, as the
+        kernel command line names it: None for 0.17.0's, which names none,
+        "0" for the loader's last resort."""
+        for word in self.vm.run("cat /proc/cmdline").split():
+            if word.startswith("ironflockos.boot_script="):
+                return word.split("=", 1)[1]
+        return None
+
+    def slot_script(self):
+        return self.vm.run(f"sed -n '1s/^# ironflockos-boot-script-version: //p' {SLOT_BOOT}/boot.cfg").strip()
+
+    def script_trial(self):
+        """grubenv's IRONFLOCKOS_SCRIPT_TRIAL and IRONFLOCKOS_SCRIPT_FAILED."""
+        env = self.grubenv()
+        return env.get("IRONFLOCKOS_SCRIPT_TRIAL", ""), env.get("IRONFLOCKOS_SCRIPT_FAILED", "")
+
+    def boot_script_says(self):
+        return self.vm.run("cat /run/ironflockos/boot-script; journalctl -b --no-pager -o cat | grep '^boot-script:'",
+                           check=False)
+
+    def boot_files_are_the_slots(self):
+        """The loader at both of GRUB's paths and boot.cfg are the slot's own,
+        no script waits for a trial, and the slot's script booted this
+        system."""
+        self.vm.run(f"cmp {BOOT_DIR}/grub.cfg {SLOT_BOOT}/loader.cfg && "
+                    f"cmp /boot/efi/EFI/debian/grub.cfg {SLOT_BOOT}/loader.cfg && "
+                    f"cmp {BOOT_DIR}/boot.cfg {SLOT_BOOT}/boot.cfg && test ! -e {BOOT_DIR}/boot-next.cfg")
+        trial, _ = self.script_trial()
+        if trial:
+            raise TestFailure(f"a boot script trial is open ({trial}):\n{self.boot_script_says()}")
+        want, got = self.slot_script(), self.booted_script()
+        if got != want:
+            raise TestFailure(f"boot script {got} booted this system, not the slot's {want}")
+
+    def hold_boot_files(self):
+        """Nothing in this boot renews the boot files any more: the test sets
+        up a state for the next boot by hand."""
+        self.vm.run("systemctl stop ironflockos-slot-proven.path ironflockos-slot-keep.timer")
+
+    def restore_boot_files(self):
+        """The slot's boot files at their places and no trial (the test's
+        shortcut)."""
+        self.hold_boot_files()
+        self.vm.run(f"cp {SLOT_BOOT}/loader.cfg {BOOT_DIR}/grub.cfg && "
+                    f"cp {SLOT_BOOT}/loader.cfg /boot/efi/EFI/debian/grub.cfg && "
+                    f"cp {SLOT_BOOT}/boot.cfg {BOOT_DIR}/boot.cfg && rm -f {BOOT_DIR}/boot-next.cfg && "
+                    f"grub-editenv {GRUBENV} set IRONFLOCKOS_SCRIPT_TRIAL= IRONFLOCKOS_SCRIPT_SLOT= && sync")
+
+    def variant_script(self, version, *sed):
+        """In CI_BOOT, for the tool's IRONFLOCKOS_BOOT_FILES: the slot's
+        loader, and the slot's script as version `version` (its first line
+        and the command line), changed further by the sed expressions."""
+        exprs = [f"1s/: [0-9]*$/: {version}/", f"s/ironflockos[.]boot_script=[0-9]*/ironflockos.boot_script={version}/",
+                 *sed]
+        self.vm.run(f"mkdir -p {CI_BOOT} && cp {SLOT_BOOT}/loader.cfg {CI_BOOT}/ && sed "
+                    + " ".join(f"-e {shlex.quote(e)}" for e in exprs) + f" {SLOT_BOOT}/boot.cfg > {CI_BOOT}/boot.cfg")
+
+    def own_script(self, text):
+        """In CI_BOOT: the slot's loader and a script of the test's."""
+        self.vm.run(f"mkdir -p {CI_BOOT} && cp {SLOT_BOOT}/loader.cfg {CI_BOOT}/")
+        self.put_file(f"{CI_BOOT}/boot.cfg", text.encode())
+
+    def stage_variant(self, version):
+        """ironflockos-boot-script stages CI_BOOT's script as if it were the
+        slot's, once the booted slot is marked good in this boot."""
+        self.vm.run("rauc status mark-good")
+        self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
+        trial, _ = self.script_trial()
+        if trial != "staged":
+            raise TestFailure(f"boot script {version} was not staged:\n{self.boot_script_says()}")
+        self.vm.run(f"cmp {BOOT_DIR}/boot-next.cfg {CI_BOOT}/boot.cfg")
+
+    def legacy_layout(self):
+        """The IRONFLOCKOS partition as 0.17.0 wrote it: its whole grub.cfg
+        (a copy stays on /data), EFI/debian/grub.cfg sourcing it, no
+        boot.cfg."""
+        if not getattr(self, "legacy_put", False):
+            self.put_file(LEGACY_COPY, render_template(LEGACY_GRUB_CFG, self.conf).encode())
+            self.legacy_put = True
+        self.hold_boot_files()
+        self.put_file("/boot/efi/EFI/debian/grub.cfg", LEGACY_DEBIAN_CFG.encode())
+        self.vm.run(f"cp {LEGACY_COPY} {BOOT_DIR}/grub.cfg && rm -f {BOOT_DIR}/boot.cfg {BOOT_DIR}/boot-next.cfg && sync")
+
+    def boot_script(self):
+        """ADR-0022 on a device installed with 0.17.0: the partition holds
+        0.17.0's whole grub.cfg (the release's own, test/qemu/fixtures,
+        rendered as the build renders it) and its EFI/debian/grub.cfg. This
+        build's slot boots with it. On the proven slot's two minutes
+        (ironflockos-slot-keep, started rather than waited for) the device
+        changes over: grub.cfg becomes boot.cfg, the loader comes to both
+        paths, the slot's script is staged; the next boot is its trial,
+        through the loader, and the same proof confirms it. Under KVM also
+        the scripts that fail their trial and the states a power cut leaves
+        (broken_scripts, cut_states)."""
+        version = self.slot_script()
+        self.legacy_layout()
+        self.vm.reboot(self.boot_timeout)
+        self.wait_running()
+        if self.booted() != "A" or self.booted_script() is not None:
+            raise TestFailure(f"0.17.0's grub.cfg did not boot slot A: slot {self.booted()}, "
+                              f"boot script {self.booted_script()}")
+        self.vm.run("systemctl start ironflockos-slot-keep.service")
+        self.vm.run(f"cmp {BOOT_DIR}/boot.cfg {LEGACY_COPY} && cmp {BOOT_DIR}/grub.cfg {SLOT_BOOT}/loader.cfg && "
+                    f"cmp /boot/efi/EFI/debian/grub.cfg {SLOT_BOOT}/loader.cfg && "
+                    f"cmp {BOOT_DIR}/boot-next.cfg {SLOT_BOOT}/boot.cfg")
+        trial, _ = self.script_trial()
+        if trial != "staged":
+            raise TestFailure(f"after the change-over the slot's script is not staged ({trial!r}):\n"
+                              f"{self.boot_script_says()}")
+        self.vm.reboot(self.boot_timeout)
+        self.wait_running()
+        if self.booted() != "A" or self.booted_script() != version:
+            raise TestFailure(f"the trial's boot: slot {self.booted()}, boot script {self.booted_script()}, "
+                              f"expected A and {version}:\n{self.boot_script_says()}")
+        self.vm.run("systemctl start ironflockos-slot-keep.service")
+        self.boot_files_are_the_slots()
+        self.vm.run(f"grep -qx 'installed={version}' /run/ironflockos/boot-script")
+        if self.vm.accel == "tcg":
+            log("--- boot scripts that fail their trial, a power cut's states: left out under emulation")
+            return
+        self.broken_scripts(version)
+        self.cut_states(version)
+
+    def broken_trial(self, broken, version, again, kernels=1):
+        """The boot after a broken script `broken` was staged, and the one
+        after when it restarts by itself (kernels): it ends on slot A with
+        the script in use, the failure is on record, and staged again (the
+        test's again() puts it back in CI_BOOT) the same script is not."""
+        starts = self.vm.kernel_starts()
+        self.vm.reboot(self.boot_timeout * kernels)
+        self.wait_running()
+        if self.vm.kernel_starts() - starts < kernels:
+            raise TestFailure(f"{kernels} kernels should have started for boot script {broken}")
+        if self.booted() != "A" or self.booted_script() != version:
+            raise TestFailure(f"after boot script {broken}: slot {self.booted()}, boot script {self.booted_script()}, "
+                              f"expected A and {version}:\n{self.boot_script_says()}")
+        trial, failed = self.script_trial()
+        if trial or failed != str(broken):
+            raise TestFailure(f"boot script {broken}'s failure is not on record (trial {trial!r}, failed {failed!r}):\n"
+                              f"{self.boot_script_says()}")
+        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && cmp {BOOT_DIR}/boot.cfg {SLOT_BOOT}/boot.cfg && "
+                    f"grep -qx 'failed={broken}' /run/ironflockos/boot-script")
+        again()
+        self.vm.run("rauc status mark-good")
+        self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
+        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && "
+                    f"grep -qx 'result=boot script {broken} is not staged: {broken} failed its trial' "
+                    "/run/ironflockos/boot-script")
+
+    def broken_scripts(self, version):
+        """Staged scripts that do not boot, each in a boot of its own: one
+        with a syntax error (grub-script-check refuses it, so it is staged by
+        hand), one whose only entry loads no kernel, and one whose kernel
+        does not find its root (the initramfs gives up and restarts,
+        panic=10). GRUB falls back to boot.cfg in the same boot for the first
+        two; for the third the loader finds the trial unconfirmed at the next
+        boot."""
+        syntax = ("# ironflockos-boot-script-version: 97\nif true; then\nmenuentry \"syntax error\" {\n"
+                  "    linux /vmlinuz\n}\n# end of the IronFlockOS boot script\n")
+        self.own_script(syntax)
+        self.vm.run("rauc status mark-good")
+        self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
+        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && grep -qx "
+                    "'result=boot script 97 is not staged: grub-script-check refused it' /run/ironflockos/boot-script")
+        self.hold_boot_files()
+        self.vm.run(f"cp {CI_BOOT}/boot.cfg {BOOT_DIR}/boot-next.cfg && grub-editenv {GRUBENV} set "
+                    "IRONFLOCKOS_SCRIPT_TRIAL=staged IRONFLOCKOS_SCRIPT_SLOT=A && sync")
+        self.broken_trial(97, version, lambda: self.own_script(syntax))
+
+        nothing = ("# ironflockos-boot-script-version: 98\nset timeout=0\nset default=0\nmenuentry \"no kernel\" {\n"
+                   "    linux /no-such-kernel\n}\n# end of the IronFlockOS boot script\n")
+        self.own_script(nothing)
+        self.stage_variant(98)
+        self.broken_trial(98, version, lambda: self.own_script(nothing))
+
+        no_root = "s/root=PARTUUID=[$][{][a-z]*uuid[}]/root=PARTUUID=00000000-0000-0000-0000-000000000000/g"
+        self.variant_script(99, no_root)
+        self.stage_variant(99)
+        console = os.path.getsize(self.vm.console)
+        self.broken_trial(99, version, lambda: self.variant_script(99, no_root), kernels=2)
+        with open(self.vm.console, "rb") as fh:
+            fh.seek(console)
+            text = fh.read()
+        if b"ironflockos.boot_script=99" not in text or b"root=PARTUUID=00000000-0000-0000-0000-000000000000" not in text:
+            raise TestFailure("no kernel started with boot script 99's command line (console.log)")
+        self.vm.run(f"grub-editenv {GRUBENV} unset IRONFLOCKOS_SCRIPT_FAILED")
+
+    def cut_states(self, version):
+        """What a power cut can leave, each set up by hand, boots. (1) A
+        confirmation cut short (good: boot-next.cfg confirmed, boot.cfg not
+        replaced yet) with grub.cfg gone, as in the change-over after its
+        rename: GRUB reads the loader at EFI/debian/grub.cfg, which runs the
+        confirmed script; the system puts grub.cfg back and finishes. (2)
+        The change-over cut after its first step: grub.cfg is still 0.17.0's,
+        EFI/debian/grub.cfg already the loader: GRUB reads grub.cfg while it
+        is there. A boot-next.cfg without a trial boots with the release
+        slot (old_slot); a trial whose boot was cut is boot script 99's above."""
+        self.variant_script(100)
+        self.hold_boot_files()
+        self.vm.run(f"cp {CI_BOOT}/boot.cfg {BOOT_DIR}/boot-next.cfg && grub-editenv {GRUBENV} set "
+                    f"IRONFLOCKOS_SCRIPT_TRIAL=good IRONFLOCKOS_SCRIPT_SLOT=A && rm {BOOT_DIR}/grub.cfg && sync")
+        self.vm.reboot(self.boot_timeout)
+        self.wait_running()
+        if self.booted_script() != "100":
+            raise TestFailure(f"without grub.cfg, boot script {self.booted_script()} booted, not the confirmed 100 "
+                              "through EFI/debian/grub.cfg")
+        self.vm.run(f"cmp {BOOT_DIR}/grub.cfg {SLOT_BOOT}/loader.cfg && test ! -e {BOOT_DIR}/boot-next.cfg && "
+                    f"head -n 1 {BOOT_DIR}/boot.cfg | grep -qx '# ironflockos-boot-script-version: 100'")
+        trial, _ = self.script_trial()
+        if trial:
+            raise TestFailure(f"the confirmation was not finished ({trial}):\n{self.boot_script_says()}")
+
+        self.restore_boot_files()
+        self.vm.run(f"cp {LEGACY_COPY} {BOOT_DIR}/grub.cfg && sync")
+        self.vm.reboot(self.boot_timeout)
+        self.wait_running()
+        if self.booted_script() is not None:
+            raise TestFailure(f"with 0.17.0's grub.cfg in EFI/BOOT and the loader in EFI/debian, boot script "
+                              f"{self.booted_script()} booted: GRUB read EFI/debian/grub.cfg first")
+        self.restore_boot_files()
+
+    def old_slot(self, serve_dir):
+        """This build's boot script boots the slot of 0.17.0, the oldest
+        release whose devices change over: the slot of the released image
+        (the published file, checked against its checksum) is written into
+        slot B, which GRUB starts next, through the loader and this build's
+        boot.cfg. A boot-next.cfg without a trial lies next to them, as a
+        power cut between the file and grubenv leaves it: the loader does
+        not run it (0.17.0's system has no ironflockos-boot-script and
+        leaves it)."""
+        release, image_id, sha = OLD_RELEASE
+        name = f"{image_id}-{release}.img.gz"
+        url = f"{load_conf(os.path.join(REPO, 'build', 'release.conf'))['DL_BASE']}/ironflockos/{release}/{name}"
+        path = os.path.join(serve_dir, "old.img.gz")
+        digest = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=120) as response, open(path, "wb") as out:
+            while chunk := response.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest() != sha:
+            raise TestFailure(f"{url} is not the published {name}")
+        with gzip.open(path, "rb") as fh:
+            offset, size = gpt_partition(fh.read(1 << 20), 2)
+        version = self.slot_script()
+        self.hold_boot_files()
+        if int(self.vm.run("blockdev --getsize64 /dev/disk/by-partlabel/rootfs-b").strip()) < size:
+            raise TestFailure(f"slot B is smaller than {release}'s slot ({size} bytes)")
+        # dd stops at the slot's end, before the image's: the pipe's exit code
+        # says nothing; the slot's own os-release does.
+        self.vm.run(f"curl -fsS {self.http}/old.img.gz | gzip -dc | dd of=/dev/disk/by-partlabel/rootfs-b bs=4M "
+                    f"iflag=fullblock,skip_bytes,count_bytes skip={offset} count={size} conv=fsync status=none",
+                    timeout=900, check=False)
+        self.vm.run("debugfs -c -R 'cat /usr/lib/os-release' /dev/disk/by-partlabel/rootfs-b 2>/dev/null | "
+                    f"grep -qx 'IMAGE_VERSION={release}'")
+        os.remove(path)
+        self.variant_script(100)
+        self.vm.run(f"cp {CI_BOOT}/boot.cfg {BOOT_DIR}/boot-next.cfg && grub-editenv {GRUBENV} set "
+                    "'ORDER=B A' B_OK=1 B_TRY=0 IRONFLOCKOS_SCRIPT_TRIAL= IRONFLOCKOS_SCRIPT_SLOT= && sync")
+        self.vm.reboot(self.boot_timeout)
+        state = self.vm.run("systemctl is-system-running --wait", timeout=self.boot_timeout, check=False).strip()
+        log(f"{release}'s system in slot B: {state}")
+        if self.image_version() != release or self.booted() != "B":
+            raise TestFailure(f"slot B runs {self.image_version()} as slot {self.booted()}, expected {release} as B")
+        if self.booted_script() != version:
+            raise TestFailure(f"boot script {self.booted_script()} booted {release}'s slot, expected this build's "
+                              f"{version}")
+        self.vm.run(f"test -e {BOOT_DIR}/boot-next.cfg")
+
 
 def installer_conf(payload_id):
     """installer.conf as FlockFlasher writes it (payload=<image id>: the stick
@@ -3293,8 +3632,12 @@ def main():
         runner.step("screen report: the times, the framebuffer and its picture of a boot with the splash",
                     runner.screen_report)
         if args.only != "boot":
-            runner.step("update into slot B; ironflock os refuses while RAUC installs and while the update waits, "
-                        "os reset also before B is marked good", runner.update_to_b)
+            runner.step("boot script (ADR-0022): 0.17.0's grub.cfg boots this slot, the change-over, the slot's script "
+                        "on trial and confirmed" + ("" if accel == "tcg" else
+                                                    "; scripts that fail their trial; the states a power cut leaves"),
+                        runner.boot_script)
+            runner.step("update into slot B (a staged boot script goes); ironflock os refuses while RAUC installs and "
+                        "while the update waits, os reset also before B is marked good", runner.update_to_b)
             if args.only != "update":
                 # Two restarts more: under emulation (the arm64 runners) each
                 # takes minutes, so there only the refusals run.
@@ -3310,6 +3653,10 @@ def main():
                 runner.step("os rollback refuses the slot that was tried and not marked good",
                             runner.rollback_after_fallback)
                 runner.step("crash: restarts by itself on a proven slot, on record on /data", runner.crash_offline)
+                # A download of 0.7 GB and one boot: amd64-efi base under KVM.
+                if accel != "tcg" and image_id == OLD_RELEASE[1]:
+                    runner.step(f"{OLD_RELEASE[0]}'s slot boots with this build's boot script; a boot-next.cfg "
+                                "without a trial is not run", lambda: runner.old_slot(serve_dir))
         ok = True
     except TestFailure:
         ok = False
