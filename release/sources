@@ -13,6 +13,9 @@
 # Docker's repository (profiles/base). containerd.io's runc links libseccomp
 # (LGPL, Debian's package) dynamically.
 docker-ce                 none Apache-2.0 (https://github.com/docker/docker-ce-packaging)
+# From 29.10.0 the client is a source package of its own (its Packages entry
+# no longer names docker-ce as its source).
+docker-ce-cli             none Apache-2.0 (https://github.com/docker/cli)
 containerd.io             none Apache-2.0 (https://github.com/containerd/containerd)
 docker-buildx-plugin      none Apache-2.0 (https://github.com/docker/buildx)
 docker-compose-plugin     none Apache-2.0 (https://github.com/docker/compose)
