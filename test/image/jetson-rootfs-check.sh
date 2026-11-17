@@ -81,6 +81,27 @@ check "none of the L4T packages kept out (extlinux, desktop configs, apt source)
   test -z "$(installed nvidia-l4t-extlinux nvidia-l4t-configs nvidia-l4t-apt-source)"
 check "no Ubuntu kernel next to NVIDIA's" test -z "$(installed 'linux-image-*')"
 check "the preinstall marker is gone" test ! -e "$root/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall"
+# NVIDIA's Agreement and notices stay with its packages (WP-6.8;
+# docs/jetson-licence-review.md, point 1). A doc directory may be a link to
+# another package's; it is followed inside the tree.
+doc_copyright() { # doc_copyright PACKAGE: its copyright file is in the tree
+  local d=$root/usr/share/doc/$1 to
+  if [ -L "$d" ]; then
+    to=$(readlink "$d")
+    case "$to" in
+      /*) d=$root$to ;;
+      *) d=$root/usr/share/doc/$to ;;
+    esac
+  fi
+  [ -s "$d/copyright" ]
+}
+mapfile -t l4t_installed < <(installed 'nvidia-l4t-*')
+l4t_no_copyright=()
+for p in "${l4t_installed[@]}"; do
+  doc_copyright "$p" || l4t_no_copyright+=("$p")
+done
+check "every installed nvidia-l4t-* package (${#l4t_installed[@]}) has its copyright file${l4t_no_copyright[*]:+; missing: ${l4t_no_copyright[*]}}" \
+  bash -c "[ ${#l4t_installed[@]} -gt 0 ] && [ ${#l4t_no_copyright[@]} -eq 0 ]"
 
 # --- kernel ----------------------------------------------------------------
 check "/boot/Image and /boot/initrd" bash -c "[ -s '$root/boot/Image' ] && [ -s '$root/boot/initrd' ]"
