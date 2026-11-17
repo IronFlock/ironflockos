@@ -194,6 +194,7 @@ hash_ok() {
   local got
   case "$2" in
     -) return 0 ;;
+    SHA512:*) got=$(sha512sum <"$1") ;;
     SHA256:*) got=$(sha256sum <"$1") ;;
     SHA1:*) got=$(sha1sum <"$1") ;;
     *) die "$1: unknown hash $2" ;;

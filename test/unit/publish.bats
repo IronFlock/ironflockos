@@ -352,3 +352,21 @@ needs() {
     [[ "$output" == *"mode == 'release' || needs.verify.outputs.mode == 'dry-run'"* ]] || { echo "$job: $output"; return 1; }
   done
 }
+
+@test "the upload checks a source file against the plan's SHA512, SHA256 or SHA1 hash" {
+  # apt names SHA512 for the files of Ubuntu's archive, SHA256 for Debian's.
+  eval "$(sed -n '/^hash_ok() {/,/^}/p' "$publish")"
+  die() {
+    echo "$*"
+    return 9
+  }
+  printf 'abc' >"$tmp/f"
+  hash_ok "$tmp/f" "SHA512:$(printf abc | sha512sum | cut -d' ' -f1)"
+  hash_ok "$tmp/f" "SHA256:$(printf abc | sha256sum | cut -d' ' -f1)"
+  hash_ok "$tmp/f" "SHA1:$(printf abc | sha1sum | cut -d' ' -f1)"
+  hash_ok "$tmp/f" -
+  ! hash_ok "$tmp/f" "SHA512:$(printf abd | sha512sum | cut -d' ' -f1)"
+  run hash_ok "$tmp/f" "MD5:900150983cd24fb0d6963f7d28e17f72"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown hash MD5:"* ]]
+}
