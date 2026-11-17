@@ -104,11 +104,11 @@ decision), in progress.
 | 6.1 | BSP decision, download and cache | ironflockos | 2 | | done (#164, ADR-0008 accepted; licence review 2026-11-07, [jetson-licence-review.md](jetson-licence-review.md)) |
 | 6.2 | `jetson-orin` rootfs and layout | ironflockos | 6 | 6.1, 2.3 | done (#171, #173, #174, #177) |
 | 6.3 | RAUC `custom` backend over `nvbootctrl`; health gate | ironflockos | 4 | 6.2 | built (`tegra-rootfs-ab`, `tegra-slot-trial`, unit tests against `nvbootctrl`'s format; the Jetson CI jobs are back in `ci-ok`, behind `JETSON_CI`); open: the A/B switch and the forced fallback on a module (WP-6.6) |
-| 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | built: the flash kit (`build/jetson-flash.sh`, packed by `build/jetson-flash-kit.sh`), run in CI with `--no-flash` up to the flash itself, and host-side flashing in the target docs; open: the flash of a real module (WP-6.6), the kit's publication with the first Jetson release, and the SD image and the package's publication, both only if WP-6.8 allows them |
+| 6.4 | Orin Nano SD image and NX/AGX flash package | ironflockos | 5 | 6.3 | built: the flash kit (`build/jetson-flash.sh`, packed by `build/jetson-flash-kit.sh`), run in CI with `--no-flash` up to the flash itself, and host-side flashing in the target docs; open: the flash of a real module (WP-6.6); the kit is in the release pipeline behind `JETSON_RELEASE` (WP-6.8); no SD image, and the package is never published (sign-off of 2026-11-17, questions 1 and 2) |
 | 6.5 | Jetson QSPI capsule lane | ironflockos | 3 | 6.3 | built (NVIDIA's own capsules from `nvidia-l4t-bootloader`, the build's lock-step check, `tegra-capsule` staged from `rauc-post-install`, the maintenance window file, the report after the restart, the FreeRTOS statement; unit tests against fakes of the firmware); open: a capsule update on a module (WP-6.6), the window's device-agent and Studio side, generated capsules for other carriers (WP-6.8) |
 | 6.6 | Jetson hardware acceptance; FlockFlasher entries; target docs | ironflockos, flasher, hardware | 5 | 6.4, 6.5, 6.8 | open |
 | 6.7 | Follow-up: Jetson RT kernel | ironflockos | 5 | 6.6, 4b.1 | open |
-| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | built: the rootfs check for the `copyright` files of NVIDIA's packages, NVIDIA's apt key as NVIDIA serves it, IronFlockOS's names in place of Ubuntu's (login prompt, `lsb-release`, no Ubuntu banner, legal notice, motd-news or logo); open: the Agreement next to the Jetson files, the source mirror, FlockFlasher's licence screen, the contact in the source offers, the legal sign-off (review done 2026-11-07; the sign-off is IronFlock's legal check) |
+| 6.8 | Jetson licence compliance; legal sign-off | ironflockos, flasher, legal | 3 | 6.2 | built: the rootfs check for the `copyright` files of NVIDIA's packages, NVIDIA's apt key as NVIDIA serves it, IronFlockOS's names in place of Ubuntu's, and the release side behind the repository variable `JETSON_RELEASE` (the Jetson image, bundle and flash kit with `NVIDIA-LICENSE.txt`, the source mirror with Ubuntu's sources and NVIDIA's, the contact in the source offers, the dry run on every pull request); signed off by IronFlock 2026-11-17; open: the source decision for NVIDIA's initrd (a release with Jetson files stops until it is made), setting `JETSON_RELEASE` for the release the owner names, FlockFlasher's licence screen (with WP-6.6) |
 | 7.1 | `arm64-efi` target and installer payload | ironflockos | 3 | 1.5 | done (#161; arm64-efi installer #172) |
 | 7.2 | ReswarmOS migration guide and sunset | ironflockos, GCS, flasher, device-agent | 2 | 2.10 | open |
 | 7.3 | Documentation refresh and review | ironflockos | 3 | 7.1, 7.2 | open |
@@ -701,9 +701,10 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
   configurations, NVMe only. CI packs the kit and runs it from the archive with
   `--no-flash` (`jetson-flash`). `/etc/nv_boot_control.conf` stays out of the slots: the
   kit puts the one `flash.sh` wrote onto the ESP, and the device copies it to `/etc` at
-  boot (`tegra-board-conf`, with WP-6.5). No release publishes the kit before
-  WP-6.8 (`docs/release.md`, "Not yet"); the Nano devkit uses the kit, as the SD image
-  waits for WP-6.8's question 1.
+  boot (`tegra-board-conf`, with WP-6.5). The release publishes the kit with
+  the Jetson image while `JETSON_RELEASE` is `true` (WP-6.8, `docs/release.md`,
+  "Jetson"); the Nano devkit uses the kit, as there is no SD image (WP-6.8's question 1,
+  answered 2026-11-17).
 
 ### WP-6.5 Jetson QSPI capsule lane (3 days)
 
@@ -750,9 +751,11 @@ Goal and acceptance: see master plan, Phase 6 and sections 3.2, 3.7, 3.10. Miles
 The master plan's Phase 6 acceptance (Nano devkit from FlockFlasher enrolls and runs a
 CUDA container; Orin NX on NVMe flashed from a host enrolls and updates with rollback);
 `docs/targets/jetson-orin.md` including host flashing; FlockFlasher entries. Milestone M8.
-The first Jetson release waits for WP-6.8's legal sign-off (ADR-0008's condition). If
-the SD image is not allowed, the Nano devkit is flashed with the flash kit for this
-acceptance.
+IronFlock signed off WP-6.8 on 2026-11-17 (ADR-0008's condition); the owner decided to
+publish the Jetson files with the next release after 0.18.0, marked as not yet proven on
+hardware, before this acceptance. There is no SD image (the review's question 1): the
+Nano devkit is flashed with the flash kit for this acceptance. FlockFlasher's entries and
+its licence screen come when FlockFlasher writes a Jetson image.
 
 ### WP-6.7 Follow-up: Jetson RT kernel (5 days)
 
@@ -795,8 +798,31 @@ Only after CUDA on the RT kernel is verified on the chosen JetPack release: `nvb
   logos in `/usr/share/pixmaps`, and `customize.sh` masks `motd-news.timer`. Release, codename, `ID_LIKE`, package names,
   version strings, `/etc/dpkg/origins/ubuntu`, the apt sources and the keyring stay.
   `ubuntu-pro-client` is not in the tree (nothing listed depends on it; the rootfs
-  check asserts it). Open: the Agreement next to the Jetson files, the source mirror,
-  FlockFlasher's licence screen, the contact in the source offers, the legal sign-off.
+  check asserts it).
+- As built, the release side (2026-11-17): the Jetson image joins a release while the
+  repository variable `JETSON_RELEASE` is `true`; unset, a release is exactly what it
+  was, which `test/unit/jetson-release.bats` holds to today's build matrix, image list,
+  attestation subjects and published files. With it on, `build.yml`'s `jetson` job builds
+  the image, checks its tree and puts NVIDIA's Agreement (fetched from NVIDIA, checked
+  against the pins of `bsp.conf`) and the flash kit next to it; the release signs and
+  attests the bundle, the slot image and the kit and publishes them with
+  `NVIDIA-LICENSE.txt` to `ironflockos/<version>/`, in `SHA256SUMS`; the catalog names
+  the slot image and the bundle, not the kit. A release with Jetson files fails when its
+  notes do not link the Agreement or, while `HARDWARE_TESTED=no` in `target.conf`, do not
+  say the image is not yet proven on hardware. The `sources` job takes Ubuntu's source
+  packages from Ubuntu's archive (Launchpad for a version that has left it) and mirrors
+  NVIDIA's `public_sources.tbz2` and the `libnvidia-container` source of its tag, both
+  pinned in `bsp.conf`, to `ironflockos/sources/l4t-<L4T version>/`; `release/sources`
+  decides each NVIDIA source package. The FreeRTOS statement offers the source at that
+  mirror and names the contact of `release/contact` (IronFlock GmbH, its postal address,
+  legal@ironflock.com); the build fails when it does not. `ci.yml`'s `jetson-release`
+  proves the path on every pull request in dry mode, without the switch
+  (`test/image/jetson-release-check.sh`). IronFlock signed off the review on
+  2026-11-17, with the answers recorded in it. Open: `nvidia-l4t-initrd`'s initrd carries
+  Ubuntu programs under the GPL whose versions NVIDIA does not name, and its source
+  decision stops a release with Jetson files until it is made; setting `JETSON_RELEASE`
+  on the owner's word; FlockFlasher's licence screen, with WP-6.6, when FlockFlasher
+  writes a Jetson image.
 
 ## Phase 7: Generic arm64 EFI, decommission, documentation
 

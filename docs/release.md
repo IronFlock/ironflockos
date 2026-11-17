@@ -14,7 +14,7 @@ image of `amd64-efi base` in `e2e` before it publishes.
 
 | Job | What it does | Identity |
 |-----|--------------|----------|
-| `verify` | Decides what the run is: a release, a re-run after the tag, or a dry run (harness `release.sh mode`) | none |
+| `verify` | Decides what the run is: a release, a re-run after the tag, or a dry run (harness `release.sh mode`), and the release's images (`release_images` in `build/lib.sh`: `RELEASE_IMAGES`, and the Jetson image while `JETSON_RELEASE` is `true`, [below](#jetson)). With Jetson files it first checks what they need (`build/jetson-release.sh check`) | none |
 | `source` | Where the images come from: while the switch is on, a release reuses those of its pull request's dry run when it can prove they are the build of the release commit's tree, and builds them otherwise ([below](#reused-images)). The job summary says which and why | none |
 | `build` | Only when the release does not reuse: every image as a release build (`build.yml`, `signing: release`): the images trust the IronFlockOS root CA, each bundle is sealed with a key of its build, each image gets its CycloneDX SBOM. Each image's build also lists its files | none |
 | `manifest` | With a build: the manifest `build.tsv`, every file of every image with sha256 and size (`build/reuse.sh manifest`) | none |
@@ -22,7 +22,7 @@ image of `amd64-efi base` in `e2e` before it publishes.
 | `attest` | The SLSA Build Level 3 provenance of every image and bundle as signed, by the harness's `attest-provenance.yml`, which runs none of this repository's code, one call per image; `stage` waits for it | the harness workflow (Sigstore) |
 | `e2e` | Only when the run built its images: the release image of `amd64-efi base` in QEMU under KVM: first boot, enrollment from the test `.flock`, reboot, the update into slot B with its own KMS-signed bundle, the fallback (`test/qemu/run.py`, [testing.md](testing.md)). Skipped when the release reuses its pull request's images: that pull request's dry run booted the same bytes of `amd64-efi base`; the other release images are published without a test of their own bytes, in either case ([below](#tests-before-the-merge)) | none |
 | `stage` | The signed files, each image's hardware list and one `SHA256SUMS` to `gs://ironflock-downloads/staging/ironflockos/<version>/`, eight uploads at a time, `SHA256SUMS` last (`build/publish.sh stage`). It also lists each file's sha256 and size for `promote` (`build/publish.sh meta`) | `ironflockos-publisher` |
-| `sources` | The [source code](#source-code) of every package in the images: the files the pool `gs://ironflock-downloads/ironflockos/sources/` lacks go there, and the index `SOURCES` to the staging tree (`build/sources.sh plan`, `build/publish.sh sources`) | `ironflockos-publisher` |
+| `sources` | The [source code](#source-code) of every package in the images: the files the pool `gs://ironflock-downloads/ironflockos/sources/` lacks go there, and the index `SOURCES` to the staging tree (`build/sources.sh plan`, `build/publish.sh sources`); with Jetson files also Ubuntu's source packages and NVIDIA's sources | `ironflockos-publisher` |
 | `promote` | The staged files to `gs://ironflock-downloads/ironflockos/<version>/`, eight at a time; a published file is never replaced by different bytes. Then the [release notes](#release-notes) to `ironflockos/release-notes.json`. Then the catalog, built on the published one from the list `stage` made (no image or bundle is downloaded) and signed with the catalog key, to `ironflockos/manifest.json`, last. Then every file and the catalog must answer through the download proxy | `ironflockos-release` (the catalog), `ironflockos-publisher` (the files) |
 | `vm-images` | The Compute Engine images of `amd64-efi base`, `amd64-efi nvidia` and `arm64-efi base`, each made from the published image into its image family `ironflockos-<target>-<variant>`, from which the virtual-device-manager creates IronFlockOS VMs (`build/gce-image.sh`, [ADR-0010](adr/0010-ironflockos-images-for-virtual-devices.md)) | `ironflockos-publisher` |
 | `tag` | The tag `v<version>` and the GitHub Release (harness `release-tag.yml`) | the release App |
@@ -279,16 +279,30 @@ source of every package in its images next to them:
   archive. A version the archive no longer has comes from
   snapshot.debian.org. Each file must have the hash of the archive's signed
   index (or snapshot's).
+- The Jetson image's packages come from Ubuntu's archive: the `sources` job
+  looks them up the same way (`build/sources.sh plan <list> ubuntu-noble`)
+  in the source indexes of `archive.ubuntu.com` (`noble`, `noble-updates`)
+  and `security.ubuntu.com` (`noble-security`), signed with Ubuntu's archive
+  key; the ports archive the image installs from serves the same indexes
+  and files. A version that has left the archive comes from Launchpad,
+  which keeps every version Ubuntu published (its API's
+  `getPublishedSources` and `sourceFileUrls`, with each file's SHA-256).
 - The packages from Docker's and NVIDIA's repositories have no source packages.
   [`release/sources`](../release/sources) decides each one: the upstream
-  tarball (`nvidia-modprobe`, the NVIDIA kernel modules the build makes), or
-  no source, with the reason (Apache-2.0, MIT, NVIDIA's binary driver).
+  tarball (`nvidia-modprobe`, the NVIDIA kernel modules the build makes);
+  `l4t`, a file `targets/jetson-orin/bsp.conf` pins by SHA-256 (NVIDIA's
+  `public_sources.tbz2` of the L4T release, the `libnvidia-container` source
+  of the Jetson toolkit's tag, [below](#jetson)); or no source, with the
+  reason (Apache-2.0, MIT, NVIDIA's binary driver, the NVIDIA Driver License
+  Agreement), only for software under no copyleft licence. `open` marks a
+  source nobody has decided yet; it fails the release.
   A source package in neither the archives nor that file fails the release,
   so a new repository needs a decision there first.
 - The files go to the pool `ironflockos/sources/<archive>/<source>/<file>`
-  (`debian`, `raspberrypi`, `upstream`), which every release shares: a file
-  there is never replaced, and only new ones are uploaded. The first release
-  uploads about 1.7 GB.
+  (`debian`, `raspberrypi`, `ubuntu`, `upstream`), and NVIDIA's sources of a
+  Jetson release to `ironflockos/sources/l4t-<L4T version>/`, which every
+  release shares: a file there is never replaced, and only new ones are
+  uploaded. The first release uploads about 1.7 GB.
 - `ironflockos/<version>/SOURCES` lists every file of the release, with the
   reason for each package without source. `dget <URL of a .dsc>` fetches a
   Debian source package. `check` makes sure `SOURCES` and the pool answer
@@ -297,6 +311,117 @@ source of every package in its images next to them:
   a copy that is passed on carries the directions too.
 - Releases up to 0.11.0 have no `SOURCES`: their images record no source
   packages.
+
+## Jetson
+
+The Jetson image (`jetson-orin`, [targets/jetson-orin.md](targets/jetson-orin.md))
+joins a release only while the repository variable `JETSON_RELEASE` is
+`true` (Settings, Secrets and variables, Actions, Variables). Anything else,
+the variable unset included, is a release without it, exactly as before:
+`test/unit/jetson-release.bats` holds the build matrix, the image list,
+the attestation subjects and the list of published files to what they were.
+IronFlock's legal sign-off of 2026-11-17 ([jetson-licence-review.md](jetson-licence-review.md),
+ADR-0008) allows it. The variable is set on the owner's word for the release
+that publishes Jetson files, the next after 0.18.0 by the owner's decision,
+and stays a repository variable; this repository does not set it. The
+image is not yet proven on hardware: no module has started it (WP-6.6).
+
+With the switch on:
+
+- `build.yml`'s `jetson` job builds `jetson-orin base` on the arm64 runner,
+  as `release-image-jetson-orin-base`; `image.yml` runs the root tree check
+  on it (`test/image/jetson-rootfs-check.sh`) and puts NVIDIA's Agreement
+  and the flash kit next to the image (`build/jetson-release.sh files`), so
+  that they are in the manifest a release reuses the images by.
+- `verify` adds `jetson-orin-base` to the images of `sign` and `attest`, and
+  fails at once unless the contact of the source offers is complete
+  (`release/contact`), no source package is `open` in `release/sources`, the
+  source pins of `bsp.conf` belong to the packages `target.conf` pins, the
+  FreeRTOS statement takes the mirror and the contact from where the
+  release puts them, and the release notes carry what they must (below)
+  (`build/jetson-release.sh check`).
+- `sign` re-signs the bundle and checks it against the keyring of the slot
+  image (`build/verify-bundles.sh` reads slot A from
+  `<image-id>-<version>.rootfs.ext4.zst`, there being no disk image);
+  `attest` attests the slot image, the bundle and the flash kit.
+- `stage` publishes, next to the other files of `ironflockos/<version>/`
+  and in `SHA256SUMS`:
+  - `ironflockos-jetson-orin-base-<version>.rootfs.ext4.zst`, slot A's
+    filesystem image, which the flash kit writes;
+  - `ironflockos-jetson-orin-base-<version>.raucb`, the bundle;
+  - `ironflockos-jetson-flash-kit-<version>.tar.gz`, IronFlockOS's scripts
+    only;
+  - `NVIDIA-LICENSE.txt`, NVIDIA's Driver License Agreement, byte for byte
+    the BSP's: fetched from NVIDIA (`BSP_LICENSE_URL` of `bsp.conf`) and
+    checked against its SHA-1 in NVIDIA's list and the SHA-256 pinned there.
+    The repository holds no copy. `stage` checks it against the pin again;
+  - the image's os-release, package list and SBOM, as for every image.
+
+  It stops before it uploads anything when the kit or the Agreement is
+  missing, or when `release-notes/<version>.md` does not link
+  `<DL_BASE>/ironflockos/<version>/NVIDIA-LICENSE.txt` or, while
+  `HARDWARE_TESTED` in `targets/jetson-orin/target.conf` is not `yes`, does
+  not say that the Jetson image is "not yet proven on hardware". The notes
+  are the author's: the release requires the two lines rather than adding
+  text of its own, so the notes that are emailed are the ones in the
+  repository.
+- The catalog names the Jetson image by its slot image and its bundle
+  (`image` is `<image-id>-<version>.rootfs.ext4.zst`, without `raw_size`,
+  `min_disk_size` and `modules_alias`, and `bundle`), and not the kit or the
+  Agreement. The device-agent reads only its own image's bundle; the flash
+  kit takes the slot image's hash from the signed catalog; `ironflock os
+  install` and `ironflock os update` (ironflock-cli 2.2) skip an image that
+  is no `.img.gz`, so they neither offer it nor update a Jetson device;
+  FlockFlasher shows only `release/boards.json`'s boards, which list no
+  Jetson image (there is no SD image, review question 1). The catalog has
+  no field for a note or a maturity, so "not yet proven on hardware" is in
+  the release notes and the target page only.
+- `sources` adds Ubuntu's source packages of the image and NVIDIA's sources
+  to the pool ([Source code](#source-code)). The mirror for NVIDIA's GPL
+  and LGPL parts is `ironflockos/sources/l4t-<L4T version>/`:
+  - `public_sources.tbz2` of the L4T release (the kernel, the out-of-tree
+    modules, `nvgpu`, the display driver, OP-TEE, TF-A, and FreeRTOS V8.1.2
+    with NVIDIA's SPE code), the source of the `nvidia-l4t-*` packages
+    `release/sources` marks `l4t`;
+  - `libnvidia-container-<tag>.tar.gz`, GitHub's archive of the tag of the
+    container toolkit (Apache-2.0 with LGPL-3.0 parts).
+
+  Both are pinned in `bsp.conf` by URL and SHA-256, as the BSP is; NVIDIA
+  publishes no hash for the sources tarball, so its pin comes from one
+  download (2026-11-17, 309,583,176 bytes). The plan fails when a package's
+  version is not the one its source is pinned for. `SOURCES` names the
+  mirror's files for each package.
+- The FreeRTOS statement in the image
+  (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source
+  at `<DL_BASE>/ironflockos/sources/l4t-<L4T version>/` and names
+  `release/contact`: IronFlock GmbH, Taunusanlage 8, 60329 Frankfurt am
+  Main, legal@ironflock.com. Both come from one place (`l4t_sources_dir` in
+  `build/lib.sh`, `release/contact`); the build fails when the statement
+  does not carry them or the contact is incomplete.
+- Devices that update over the air get the Agreement inside the bundle:
+  `nvidia-l4t-core`'s
+  `/usr/share/doc/nvidia-l4t-core/Tegra_Software_License_Agreement-Tegra-Linux.txt.gz`
+  is the BSP's text byte for byte (the root tree check holds it to the pin),
+  and every `nvidia-l4t-*` package's `copyright` carries it.
+
+**The proof before the switch.** Every pull request with `JETSON_CI` runs
+the same code in its dry mode on its own Jetson image (`ci.yml`'s
+`jetson-release`, after `jetson-rootfs`, `test/image/jetson-release-check.sh`):
+`stage` with `DRY_RUN=1` must refuse the release without notes, and with
+notes must list exactly the files above; the Agreement must be the pin;
+the catalog, signed with a throwaway key, must name the slot image and the
+bundle with their hashes; the source plan of the image must place every
+package (an `open` one is reported there, and refused by a release) and
+mirror `public_sources.tbz2` and the `libnvidia-container` source to
+`l4t-<L4T version>/`, and `publish.sh sources` must accept it with
+`DRY_RUN=1`; and the slot image's statement must offer the source at that
+mirror and name the contact. Nothing is published, and no identity is
+used.
+
+**What only a real release shows.** That the download proxy serves the
+Jetson files and `l4t-<L4T version>/`, that the upload of the 300 MB
+sources tarball fits the `sources` job's time, and the KMS signature of the
+Jetson bundle.
 
 ## Moving a release to production
 
@@ -365,25 +490,13 @@ The pool gives both identities to runs on `v*` tags. Nothing else of
   Since [ADR-0019](adr/0019-every-test-runs-before-the-merge.md) it would
   have to run before the merge, where no bundle of the release carries the
   release signature and no catalog names it; how is open.
-- **The Jetson flash kit.** CI packs it on every pull request
-  (`ironflockos-jetson-flash-kit-<version>.tar.gz`, `build/jetson-flash-kit.sh`,
-  the artifact `jetson-flash-kit` of `ci.yml`'s `jetson-flash`), but no
-  release publishes it: it flashes the release's Jetson slot image, and no
-  Jetson file is published before the legal sign-off (ADR-0008, WP-6.8),
-  and the kit is of no use without the release's slot image. What the
-  sign-off then needs, with the Jetson image joining `build.yml`'s matrix:
-  the image's build packs the kit next to the image
-  (`build/jetson-flash-kit.sh out/ironflockos-jetson-orin-base <version>`),
-  and `files` in `build/publish.sh` adds `*.rootfs.ext4.zst` and
-  `ironflockos-jetson-flash-kit-*.tar.gz`. Both are then staged and
-  promoted to `ironflockos/<version>/` like every other file, named in
-  `SHA256SUMS`, next to `NVIDIA-LICENSE.txt`. The catalog names the slot
-  image (the kit checks it there) but not the kit, which is no image. The
-  kit holds nothing of NVIDIA's (licence review, points 4 and 7). The flash
-  package itself is never published unless legal answers the review's
-  questions 1 and 2 with yes.
-- **The source code of Jetson images.** `build/sources.sh` knows Debian and the
-  Raspberry Pi archive, not Ubuntu or NVIDIA's L4T repositories. Jetson's
-  sources (Ubuntu's source packages, NVIDIA's `public_sources.tbz2`) come with
-  its licence compliance, WP-6.8 ([jetson-licence-review.md](jetson-licence-review.md)),
-  before the first Jetson release.
+- **The source of NVIDIA's initrd.** `nvidia-l4t-initrd`'s `/boot/initrd`,
+  which the Jetson image boots, carries programs of Ubuntu 24.04 under the
+  GPL and LGPL (BusyBox, bash, coreutils, util-linux, e2fsprogs, kmod,
+  nfs-utils, the ISC DHCP client, glibc and others), copied by NVIDIA
+  without a list of their package versions; `public_sources.tbz2` does not
+  hold them. `release/sources` marks it `open`, so a release with Jetson
+  files stops at `verify` until it is decided.
+- **The flash package and the SD image.** Never published: the review's
+  questions 1 and 2 were answered with "not relied on" and "not
+  distributed" ([jetson-licence-review.md](jetson-licence-review.md)).

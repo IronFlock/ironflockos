@@ -548,7 +548,9 @@ the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 `nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
 agent and Docker's `nvidia` runtime, and the boot firmware lane: NVIDIA's
 capsules in `/opt/ota_package/t23x` unchanged against the package's
-checksums, the FreeRTOS statement, NVIDIA's licence texts, `tegra-capsule`,
+checksums, the FreeRTOS statement with the source mirror's URL and the
+contact of `release/contact`, NVIDIA's licence texts and the Agreement in
+`nvidia-l4t-core`'s documentation byte for byte as `bsp.conf` pins it, `tegra-capsule`,
 its report unit and the maintenance window's link. It checks that every installed
 `nvidia-l4t-*` package has its `copyright` file (following a doc directory that links
 to another package's), and the names at login: os-release without `UBUNTU_*` fields
@@ -620,9 +622,42 @@ capsules carry only NVIDIA's board spec strings and an FMP header; nothing of
 NVIDIA's is in the repository. The A/B switch, the forced fallback and a
 capsule update on a module are the hardware checklist (WP-6.6).
 
-Both jobs run on every pull request when the repository variable `JETSON_CI`
-is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs
-them: without the variable no pull request gets `ci-ok`.
+The release path of a Jetson image is proven on every pull request without
+the switch `JETSON_RELEASE` and without publishing anything (WP-6.8,
+`docs/release.md`, "Jetson"). `jetson-rootfs` puts NVIDIA's Agreement and the
+flash kit next to the image, as a release build does
+(`build/jetson-release.sh files`), and the `jetson-release` job runs
+`test/image/jetson-release-check.sh` on that artifact on an x86_64 runner:
+`build/publish.sh stage` with `DRY_RUN=1` must refuse the release without
+notes, and with notes that link the Agreement and say the image is not yet
+proven on hardware must list exactly the slot image, the bundle, the flash
+kit, `NVIDIA-LICENSE.txt`, the os-release, the package list, the SBOM (a
+stand-in: a development build makes none) and `SHA256SUMS`; the Agreement
+must be the pin; `tools/catalog` must build a catalog, signed with a
+throwaway key and verified, that names the slot image and the bundle with
+their hashes, and no board, kit or Agreement; `build/sources.sh plan` must
+place every source package of the image (Ubuntu's with apt in the build
+container), mirror `public_sources.tbz2` and the `libnvidia-container`
+source to `ironflockos/sources/l4t-<L4T version>/`, and report an `open`
+decision instead of refusing it; `build/publish.sh sources` must accept the
+plan with `DRY_RUN=1`; and the FreeRTOS statement in the slot image must
+offer the source at that mirror and name the contact, and the slot image
+must carry the Agreement byte for byte (`debugfs`). The job takes a few
+minutes and runs beside `jetson-flash`, which takes longer.
+`test/unit/jetson-release.bats` covers it without a build: the switch off
+(today's build matrix, image list, attestation subjects, published files
+and source lists, each compared with what they were), the switch on (the
+Jetson files, `SHA256SUMS`, the source list apart), the release notes rule,
+the Agreement's pin at `stage`, every NVIDIA source package's decision
+(`release/sources`), Ubuntu's archive and Launchpad with stand-ins for
+`docker` and `curl`, the pool paths, the contact and an emptied copy of it,
+and `build/jetson-release.sh check` and `files`. `tegra-capsule.bats` checks
+the statement's mirror and contact at build time, and `verify-bundles.bats`
+the check of a Jetson bundle against the keyring in its slot image.
+
+The three jobs run on every pull request when the repository variable
+`JETSON_CI` is `true` (switched off by #201, on again with WP-6.3), and
+`ci-ok` needs them: without the variable no pull request gets `ci-ok`.
 
 ## Hardware checklist
 

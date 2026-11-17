@@ -8,13 +8,29 @@ and makes the flash package without a module (WP-6.2). The RAUC backend over
 the boot firmware lane with NVIDIA's capsules (WP-6.5); nobody has run them on
 a module yet. The flash kit is built and runs in CI up to the flash itself
 (WP-6.4, [Flashing a module](#flashing-a-module)); nobody has flashed a module
-with it yet. Still to come:
+with it yet. IronFlock signed off the licence review on 2026-11-17 (WP-6.8), and
+the release publishes the Jetson files while the repository variable
+`JETSON_RELEASE` is `true` ([release.md](../release.md#jetson)): the owner
+decided to publish them from the next release after 0.18.0. **Not yet proven
+on hardware**: no module has started the image ([Tested hardware](#tested-hardware)).
+Still to come:
 
 - the first flash, the A/B switch, the forced fallback and a capsule update
   on a module (WP-6.6);
-- the Orin Nano Developer Kit's SD image, only if IronFlock's legal check
-  allows it (WP-6.8); until then the developer kit is flashed with the flash
-  kit too.
+- there is no SD image for the Orin Nano Developer Kit (the review's
+  question 1): the developer kit is flashed with the flash kit too.
+
+## Tested hardware
+
+None yet. No module has been flashed with the flash kit or has started
+IronFlockOS; CI builds the image and runs the kit up to the flash itself
+([Proven, and still to prove](#proven-and-still-to-prove)). A release that
+publishes Jetson files says so in its notes while `HARDWARE_TESTED=no` in
+`targets/jetson-orin/target.conf` (WP-6.6 sets it).
+
+| Board | Firmware | Date | Result | Notes |
+|-------|----------|------|--------|-------|
+| none | | | | |
 
 | | |
 |---|---|
@@ -26,7 +42,7 @@ with it yet. Still to come:
 | Consoles | `ttyTCU0`, 115200 8N1 (the debug header), and the display (`tty0`) |
 | Slot size | 8 GiB (`base`); only the base variant |
 | Disk | NVIDIA's NVMe layout for rootfs A/B, plus `data` (see below); written by NVIDIA's flash tools |
-| Image | `<image-id>-<version>.rootfs.ext4.zst`, slot A's filesystem (APP), and the bundle `<image-id>-<version>.raucb`; the flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` writes it to a module |
+| Image | `<image-id>-<version>.rootfs.ext4.zst`, slot A's filesystem (APP), and the bundle `<image-id>-<version>.raucb`; the flash kit `ironflockos-jetson-flash-kit-<version>.tar.gz` writes it to a module; `NVIDIA-LICENSE.txt` next to them in a release ([release.md](../release.md#jetson)) |
 
 ## Packages and pins
 
@@ -721,13 +737,14 @@ Orin Nano Developer Kit is flashed the same way: it has no SD image of
 IronFlockOS (see the start of this page).
 
 CI packs the kit on every pull request (`build/jetson-flash-kit.sh`, the
-artifact `jetson-flash-kit` of the `jetson-flash` job). No release publishes
-it yet: no Jetson file is published before IronFlock's legal sign-off
-(ADR-0008, WP-6.8; see [release.md](../release.md#not-yet)). Until then,
-take the kit from that artifact, or run `build/jetson-flash.sh` from a clone
-of this repository; with no published image, give it the slot image of the
-`image-jetson-orin-base` artifact with `--image` and its line of that
-artifact's `SHA256SUMS` with `--sha256`.
+artifact `jetson-flash-kit` of the `jetson-flash` job). A release publishes
+it next to the slot image and NVIDIA's Agreement while `JETSON_RELEASE` is
+`true` ([release.md](../release.md#jetson)), at
+`https://instance-registry.ironflock.com/dl/ironflockos/<version>/`. Before
+the first such release, take the kit from that artifact, or run
+`build/jetson-flash.sh` from a clone of this repository; with no published
+image, give it the slot image of the `image-jetson-orin-base` artifact with
+`--image` and its line of that artifact's `SHA256SUMS` with `--sha256`.
 
 ### What you need
 
@@ -907,8 +924,15 @@ capsules, the statement and `tegra-capsule`. It also runs the tree's binaries in
 dpkg and apt consistency, systemd, Docker, containerd, RAUC, the backend,
 `ironflock`, `nvidia-ctk` and `nvidia-container-cli`. CI runs both on every
 pull request (`jetson-rootfs` in `ci.yml`, with the bundle), and makes the
-flash package from the image with the flash kit (`jetson-flash`, above). Both jobs run when the
-repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
+flash package from the image with the flash kit (`jetson-flash`, above).
+`jetson-release` runs the release path on the image in its dry mode
+(`test/image/jetson-release-check.sh`, [release.md](../release.md#jetson)):
+what would be published, the release notes rule, the catalog, the source
+mirror, and the FreeRTOS statement in the slot image against the mirror and
+the contact. The three jobs run when the repository variable `JETSON_CI` is
+`true`, and `ci-ok` needs them. `test/unit/jetson-release.bats` covers the
+switch, the published files, the notes rule, the source decisions and the
+contact.
 
 ## Open points
 
@@ -928,7 +952,7 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
 - eMMC as the system disk (AGX Orin without NVMe): `build/tegra-layout.py`
   knows NVIDIA's NVMe layout only.
 - Licences ([jetson-licence-review.md](../jetson-licence-review.md); done
-  2026-11-07, legal sign-off in WP-6.8). Jetson Linux is under the NVIDIA
+  2026-11-07, signed off by IronFlock 2026-11-17). Jetson Linux is under the NVIDIA
   Driver License Agreement: NVIDIA's binaries may be redistributed only
   unchanged, and every recipient must get the Agreement. What follows for this
   target:
@@ -943,4 +967,17 @@ repository variable `JETSON_CI` is `true`, and `ci-ok` needs them.
     downloads the BSP and the Agreement from NVIDIA and asks for acceptance
     (WP-6.4, [Flashing a module](#flashing-a-module));
   - the QSPI capsule comes unchanged from `nvidia-l4t-bootloader` (WP-6.5,
-    built: "Boot firmware updates").
+    built: "Boot firmware updates");
+  - a release publishes `NVIDIA-LICENSE.txt` (the BSP's Agreement, fetched
+    from NVIDIA as `bsp.conf` pins it) next to the Jetson files, and its
+    notes link it; the image carries the Agreement byte for byte in
+    `nvidia-l4t-core`'s documentation (built, WP-6.8);
+  - the release mirrors NVIDIA's `public_sources.tbz2` and the
+    `libnvidia-container` source to `ironflockos/sources/l4t-39.2.1/`, and
+    the Ubuntu source packages of the image to the release's pool; the
+    FreeRTOS statement offers the source there and names IronFlock GmbH,
+    its postal address and legal@ironflock.com (built, WP-6.8);
+  - open: the source of NVIDIA's initrd (`nvidia-l4t-initrd`), which
+    carries Ubuntu programs under the GPL whose versions NVIDIA does not
+    name; until it is decided in `release/sources`, a release with Jetson
+    files stops at its start.
