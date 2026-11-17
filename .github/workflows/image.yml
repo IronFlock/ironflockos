@@ -90,7 +90,7 @@ jobs:
       - name: jetson-rootfs-check (jetson-orin)
         if: inputs.target == 'jetson-orin'
         run: |
-          bundles=(out/ironflockos-$TARGET-$VARIANT$SUFFIX/*.raucb)
+          bundles=("out/ironflockos-$TARGET-$VARIANT$SUFFIX"/*.raucb)
           sudo test/image/jetson-rootfs-check.sh "/mnt/ironflockos-work/ironflockos-$TARGET-$VARIANT$SUFFIX/rootfs" "${bundles[0]}"
       - name: NVIDIA's Agreement and the flash kit (jetson-orin)
         if: inputs.target == 'jetson-orin'
