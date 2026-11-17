@@ -127,6 +127,26 @@ check "Ubuntu's sources are signed by ubuntu-archive-keyring" \
 check "the keyring is in the tree" test -s "$root/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 check "the L4T pins are kept" grep -q "Pin: version $L4T_PACKAGE_VERSION" "$root/etc/apt/preferences.d/ironflockos-l4t.pref"
 
+# --- names: IronFlockOS's where a person sees them, Ubuntu's technical
+# references kept (build/branding.sh; WP-6.8) ---------------------------------
+check "os-release: no UBUNTU_* field, no Ubuntu URL" bash -c "! grep -qE '^UBUNTU_|ubuntu\.com|launchpad' '$osr'"
+check "the login prompt and issue.net are the overlay's, IronFlockOS's" \
+  bash -c "cmp -s '$src/overlay/etc/issue' '$root/etc/issue' && cmp -s '$src/overlay/etc/issue.net' '$root/etc/issue.net'"
+lsb=$root/etc/lsb-release
+check "lsb-release: IronFlockOS, based on Ubuntu 24.04; release and codename Ubuntu's" \
+  bash -c "grep -qx DISTRIB_ID=IronFlockOS '$lsb' && grep -qx DISTRIB_RELEASE=24.04 '$lsb' && grep -qE '^DISTRIB_DESCRIPTION=\"IronFlockOS [^\"]+, based on Ubuntu 24.04\"\$' '$lsb'"
+check "no Ubuntu legal notice at the first login (/etc/legal)" test ! -e "$root/etc/legal"
+check "no login banner script names Ubuntu or Canonical (/etc/update-motd.d)" \
+  bash -c "! grep -rqiE 'ubuntu|canonical' '$root/etc/update-motd.d'"
+check "nothing fetches motd.ubuntu.com, and motd-news is masked" \
+  bash -c "! grep -rIq 'motd\.ubuntu\.com' '$root/etc' '$root/usr/lib/systemd' && [ \"\$(systemctl --root='$root' is-enabled motd-news.timer)\" = masked ]"
+# Nothing the image installs depends on these; Recommends are not installed.
+check "no Ubuntu Pro client, nothing else that advertises Canonical's services at login or in apt" \
+  test -z "$(installed ubuntu-pro-client ubuntu-advantage-tools ubuntu-pro-client-l10n motd-news-config \
+    update-notifier-common ubuntu-release-upgrader-core landscape-common)"
+check "no apt hook of Ubuntu Pro (ESM notices in apt's output)" test ! -e "$root/etc/apt/apt.conf.d/20apt-esm-hook.conf"
+check "Ubuntu's origin file stays (dpkg's vendor)" test -s "$root/etc/dpkg/origins/ubuntu"
+
 # --- IronFlockOS ---------------------------------------------------------------
 check "RAUC: compatible, the custom backend, APP and APP_b" \
   bash -c "c='$root/etc/rauc/system.conf'; grep -qx compatible=ironflockos-jetson-orin-base \$c && grep -qx bootloader=custom \$c && grep -qx device=/dev/disk/by-partlabel/APP \$c && grep -qx device=/dev/disk/by-partlabel/APP_b \$c"

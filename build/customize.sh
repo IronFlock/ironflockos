@@ -66,6 +66,9 @@ if [ -n "${IRONFLOCKOS_DIRTY:-}" ]; then
   sed -i 's/^BUILD_ID=\(.*\)$/BUILD_ID=\1-dirty/' "$ROOT/usr/lib/os-release"
 fi
 ln -sf ../usr/lib/os-release "$ROOT/etc/os-release"
+# The login prompt, lsb-release and the login banner name IronFlockOS, not the
+# distribution (docs/build.md, "Identity"; WP-6.8).
+bash "$here/branding.sh" "$ROOT" "$IRONFLOCKOS_VERSION"
 # Every device generates its own machine-id on its first boot; RAUC's
 # post-install handler carries it into the other slot.
 printf 'uninitialized\n' >"$ROOT/etc/machine-id"
@@ -268,6 +271,13 @@ fi
 systemctl --root="$ROOT" mask apt-daily.timer apt-daily-upgrade.timer fwupd-refresh.timer \
   systemd-firstboot.service rauc-mark-good.service sshd-keygen.service \
   systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service
+# Ubuntu's motd-news would fetch news from motd.ubuntu.com twice a day for the
+# login banner; build/branding.sh removes its script. Masked, as a slot's first
+# boot enables what no preset names.
+if [ -e "$ROOT/usr/lib/systemd/system/motd-news.timer" ]; then
+  systemctl --root="$ROOT" disable motd-news.timer 2>/dev/null || true
+  systemctl --root="$ROOT" mask motd-news.timer motd-news.service
+fi
 # sshd listens on the network only; systemd's SSH generator (vsock, AF_UNIX)
 # fails on machines without vsock.
 mkdir -p "$ROOT/etc/systemd/system-generators"

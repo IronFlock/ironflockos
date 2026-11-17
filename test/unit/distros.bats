@@ -86,6 +86,9 @@ setup() {
   [ "$status" -eq 0 ] && [[ "$output" == *$'\nID_LIKE=debian\n'* ]]
   DISTRO_ID_LIKE="ubuntu debian" run bash "$repo/build/osrelease.sh" 1.2.3 amd64-efi base std 1a2b3c4 1793000000
   [ "$status" -eq 0 ] && [[ "$output" == *$'\nID_LIKE="ubuntu debian"\n'* ]]
+  # IronFlockOS's own: no UBUNTU_* field, no Ubuntu URL (WP-6.8).
+  [[ "$output" == NAME=\"IronFlockOS\"$'\n'* ]]
+  [ -z "$(grep -E '^UBUNTU_|ubuntu\.com|launchpad' <<<"$output")" ]
   DISTRO_ID_LIKE='debian"; x' run bash "$repo/build/osrelease.sh" 1.2.3 amd64-efi base std 1a2b3c4 1793000000
   [ "$status" -ne 0 ] && [[ "$output" == *"not an ID_LIKE list"* ]]
 }
