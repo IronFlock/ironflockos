@@ -286,14 +286,14 @@ SH
 
 # --- staging --------------------------------------------------------------------
 
-@test "a newer script of the slot's is staged for one trial, through a temporary name" {
+@test "a newer script of the slot's is staged for its first trial, through a temporary name" {
   script 3 >"$tmp/files/boot.cfg"
   run_tool proven
   [ "$status" -eq 0 ]
   cmp "$boot/boot-next.cfg" "$tmp/files/boot.cfg"
   cmp "$boot/boot.cfg" <(script 2)
   [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = staged ] && [ "$(env_of IRONFLOCKOS_SCRIPT_SLOT)" = A ]
-  [[ "$output" == *"boot script 3 staged: the next boot tries it once (in use: 2)"* ]]
+  [[ "$output" == *"boot script 3 staged: the next boot tries it, trial 1 of 2 (in use: 2)"* ]]
   grep -qx trial=staged "$tmp/run/boot-script" && grep -qx trial-version=3 "$tmp/run/boot-script"
   no_leftovers
   # Staged once: the next runs change nothing.
@@ -421,40 +421,99 @@ stage3() {
   cmp "$boot/boot.cfg" <(script 2)
 }
 
-@test "a trial the loader found unconfirmed: recorded as failed, boot-next.cfg goes, the slot's flags stay as GRUB left them" {
+# A trial of version 3 that the loader found unconfirmed at the boot after it.
+unconfirmed3() {
   stage3
   set_env IRONFLOCKOS_SCRIPT_TRIAL=failed A_TRY=1
   cmdline A 2
+}
+
+@test "a first trial the loader found unconfirmed: counted once, boot-next.cfg goes, the slot's flags stay as GRUB left them" {
+  unconfirmed3
   run_tool boot
   [ "$status" -eq 0 ]
   [ ! -e "$boot/boot-next.cfg" ]
-  [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = "" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 3 ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = "" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = 3 ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ]
   [ "$(env_of A_TRY)" = 1 ]
   cmp "$boot/boot.cfg" <(script 2)
-  [[ "$output" == *"the trial of boot script 3 failed (its boot was not confirmed): boot script 2 stays in use, 3 is not tried again"* ]]
-  grep -qx failed=3 "$tmp/run/boot-script"
-  grep -q '^result=the trial of boot script 3 failed' "$tmp/run/boot-script"
-  # The record of this boot stays when a later run has nothing to do.
+  [[ "$output" == *"the trial of boot script 3 was not confirmed (its boot was not confirmed): first trial not confirmed, one more; boot script 2 stays in use"* ]]
+  grep -qx 'trials=1 of 2' "$tmp/run/boot-script" && grep -qx unconfirmed=3 "$tmp/run/boot-script"
+  grep -qx trials-of=3 "$tmp/run/boot-script"
+  grep -q '^result=the trial of boot script 3 was not confirmed' "$tmp/run/boot-script"
+  # Not staged again in this boot's first run, nor before the slot is good in this boot.
+  [ ! -e "$boot/boot-next.cfg" ]
+  run_tool proven
+  [ ! -e "$boot/boot-next.cfg" ]
+  grep -q '^result=the trial of boot script 3 was not confirmed' "$tmp/run/boot-script"
+}
+
+@test "the retry: staged again by the same rules, and the second unconfirmed trial is the failure for good" {
+  unconfirmed3
+  run_tool boot
+  set_env A_TRY=0
   run_tool kept
-  grep -q '^result=the trial of boot script 3 failed' "$tmp/run/boot-script"
+  cmp "$boot/boot-next.cfg" <(script 3)
+  [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = staged ] && [ "$(env_of IRONFLOCKOS_SCRIPT_SLOT)" = A ]
+  [[ "$output" == *"boot script 3 staged: the next boot tries it, trial 2 of 2 (in use: 2)"* ]]
+  grep -qx 'trials=1 of 2' "$tmp/run/boot-script"
+  # The second trial's boot, unconfirmed again.
+  set_env IRONFLOCKOS_SCRIPT_TRIAL=tried
+  cmdline A 3
+  run_tool boot
+  grep -qx 'trials=2 of 2' "$tmp/run/boot-script"
+  set_env IRONFLOCKOS_SCRIPT_TRIAL=failed A_TRY=1
+  cmdline A 2
+  run_tool boot
+  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 3 ] && [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "" ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = "" ] && [ ! -e "$boot/boot-next.cfg" ]
+  [[ "$output" == *"the trial of boot script 3 was not confirmed again (its boot was not confirmed): failed for good; boot script 2 stays in use, 3 is not tried again"* ]]
+  grep -qx failed=3 "$tmp/run/boot-script" && grep -qx 'trials=2 of 2' "$tmp/run/boot-script"
+  # Not a third time; a higher version is.
+  set_env A_TRY=0
+  run_tool kept
+  [ ! -e "$boot/boot-next.cfg" ]
+  grep -qx 'result=boot script 3 is not staged: 3 failed its trial' "$tmp/run/boot-script"
+  script 4 >"$tmp/files/boot.cfg"
+  run_tool kept
+  cmp "$boot/boot-next.cfg" <(script 4)
+  grep -qx 'trials=0 of 2' "$tmp/run/boot-script"
+}
+
+@test "a higher version starts its own count; a confirmed second trial clears it" {
+  unconfirmed3
+  run_tool boot
+  # Version 4 comes before 3 had its second trial: its unconfirmed trial is its first.
+  script 4 >"$boot/boot-next.cfg"
+  set_env IRONFLOCKOS_SCRIPT_TRIAL=failed IRONFLOCKOS_SCRIPT_SLOT=A
+  run_tool boot
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = 4 ] && [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ]
+  # 4's second trial is confirmed: no count is left.
+  script 4 >"$boot/boot-next.cfg"
+  set_env IRONFLOCKOS_SCRIPT_TRIAL=tried IRONFLOCKOS_SCRIPT_SLOT=A A_TRY=0
+  cmdline A 4
+  run_tool kept
+  cmp "$boot/boot.cfg" <(script 4)
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = "" ]
 }
 
 @test "a trial whose boot ran another script: failed; when its script booted the other slot, the trial's slot gets its try back" {
   stage3
   cmdline A 2
   run_tool boot
-  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 3 ] && [ "$(env_of A_TRY)" = 1 ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = 3 ] && [ "$(env_of A_TRY)" = 1 ]
   stage3
-  set_env IRONFLOCKOS_SCRIPT_FAILED=
+  set_env IRONFLOCKOS_SCRIPT_UNCONFIRMED=
   cmdline B 3
   run_tool boot
-  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 3 ] && [ "$(env_of A_TRY)" = 0 ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = 3 ] && [ "$(env_of A_TRY)" = 0 ]
   [[ "$output" == *"slot B booted with boot script 3"* ]]
 }
 
 @test "the highest failed version is kept" {
   stage3
-  set_env IRONFLOCKOS_SCRIPT_FAILED=7 IRONFLOCKOS_SCRIPT_TRIAL=failed
+  set_env IRONFLOCKOS_SCRIPT_FAILED=7 IRONFLOCKOS_SCRIPT_UNCONFIRMED=3 IRONFLOCKOS_SCRIPT_TRIAL=failed
   run_tool boot
   [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 7 ]
 }
@@ -500,7 +559,7 @@ stage3() {
   run_tool cancel
   [ "$status" -eq 0 ]
   [ ! -e "$boot/boot-next.cfg" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_TRIAL)" = "" ]
-  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "" ]
   [ -e "$tmp/run/boot-script.hold" ]
   [[ "$output" == *"an OS update was installed: the staged boot script 3 goes"* ]]
   run_tool proven
@@ -508,10 +567,11 @@ stage3() {
   stage3
   run_tool cancel
   [ ! -e "$boot/boot-next.cfg" ] && [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = "" ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "" ]
   cmp "$boot/boot.cfg" <(script 2)
 }
 
-@test "cancel finishes a confirmed trial and records a failed one" {
+@test "cancel finishes a confirmed trial and counts a trial boot the loader found unconfirmed" {
   stage3
   set_env IRONFLOCKOS_SCRIPT_TRIAL=good
   run_tool cancel
@@ -519,7 +579,11 @@ stage3() {
   script 4 >"$boot/boot-next.cfg"
   set_env IRONFLOCKOS_SCRIPT_TRIAL=failed IRONFLOCKOS_SCRIPT_SLOT=A
   run_tool cancel
-  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 4 ] && [ ! -e "$boot/boot-next.cfg" ]
+  [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = 4 ] && [ ! -e "$boot/boot-next.cfg" ]
+  script 4 >"$boot/boot-next.cfg"
+  set_env IRONFLOCKOS_SCRIPT_TRIAL=failed IRONFLOCKOS_SCRIPT_SLOT=A
+  run_tool cancel
+  [ "$(env_of IRONFLOCKOS_SCRIPT_FAILED)" = 4 ] && [ "$(env_of IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "" ]
 }
 
 @test "rauc-post-install cancels after it wrote a root slot, and never fails for it" {
@@ -603,9 +667,10 @@ IRONFLOCKOS_BOOT=splash
 IRONFLOCKOS_RT_CMDLINE=nosoftlockup isolcpus=managed_irq,domain,2-7,10-15 nohz_full=2-7,10-15 rcu_nocbs=2-7,10-15 irqaffinity=0-1,8-9 processor.max_cstate=1 intel_idle.max_cstate=0
 IRONFLOCKOS_SCRIPT_TRIAL=staged
 IRONFLOCKOS_SCRIPT_SLOT=A
+IRONFLOCKOS_SCRIPT_UNCONFIRMED=999
 IRONFLOCKOS_SCRIPT_FAILED=999
 "
-  [ "${#body}" -lt 700 ]
+  [ "${#body}" -lt 600 ]
 }
 
 @test "the loader's choices: the trial only when staged for GRUB's first slot, good and untried; boot.cfg otherwise; the last resort last" {
@@ -649,4 +714,10 @@ IRONFLOCKOS_SCRIPT_FAILED=999
   if git -C "$repo" cat-file -e v0.17.0:targets/amd64-efi/grub/grub.cfg 2>/dev/null; then
     git -C "$repo" show v0.17.0:targets/amd64-efi/grub/grub.cfg | cmp - "$fixture"
   fi
+}
+
+@test "a factory reset leaves the trial counts in grubenv: it gives no version its tries back" {
+  r=$repo/overlay/usr/lib/ironflockos/factory-reset
+  [ "$(grep -o 'for var in [A-Z_ ]*' "$r")" = "for var in IRONFLOCKOS_RT_CMDLINE IRONFLOCKOS_BOOT" ]
+  ! grep -q 'IRONFLOCKOS_SCRIPT' "$r"
 }

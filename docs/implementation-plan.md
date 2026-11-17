@@ -866,7 +866,7 @@ record or pull request; none has a work package issue.
 | `v0.15.0` | 2026-11-11 | Proxy per device; factory reset; network profiles from the boot medium; app data survives OS updates | ADR-0014, ADR-0015, ADR-0016 |
 | `v0.16.0` | 2026-11-11 | Every name is `ironflockos`; the `ironflock` command in the image; the release reuses the images its pull request tested; every test runs before the merge | ADR-0017, ADR-0018, ADR-0019 |
 | `v0.17.0` | 2026-11-12 | A machine panel PC on the stock image (repair at start, AppArmor); the screen (Phase 8); trusted CAs from the boot medium | ADR-0020, ADR-0021, #212 |
-| next release | not released yet | An OS update renews the boot script on the IRONFLOCKOS partition, with one trial boot; devices installed with 0.17.0 change over to the loader by themselves | ADR-0022 |
+| next release | not released yet | An OS update renews the boot script on the IRONFLOCKOS partition, with a trial boot and one retry; devices installed with 0.17.0 change over to the loader by themselves | ADR-0022 |
 
 Open from these: the acceptance of ADR-0020 on the machine (with WP-8.6), and the
 factory reset's QEMU test through `ironflock os reset`, which joins the QEMU tests with

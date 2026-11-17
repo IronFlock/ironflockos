@@ -52,7 +52,9 @@ checks"). The boot script's service (`boot-script.bats`) runs against folders th
 stand for the IRONFLOCKOS partition and the slot's `/usr/lib/ironflockos/boot`, with
 fakes for `grub-editenv`, `grub-script-check` and `sync`: the change-over from
 0.17.0's partition and the order of its renames, each state a cut leaves, staging and
-its refusals, the trial's confirmation and failure, an update that cancels it. The
+its refusals, the trial's confirmation and failure, the retry (a first unconfirmed trial stages the
+version again, the second fails it for good, a higher version or a confirmation
+resets the count, a cancel does not count), an update that cancels it. The
 loader and the script are checked as files: their versions and last lines, only
 modules built into Debian's signed GRUB, what the loader writes to `grubenv` and its
 choices; where `grub-script-check` is installed (CI's unit job installs `grub-common`),
@@ -393,18 +395,22 @@ Sequence:
    for byte as `boot.cfg`, the loader at both paths) and stages the slot's
    script; the next boot is its trial, and `ironflockos-slot-keep` confirms it.
    Under KVM only, as each costs a boot: three scripts fail their trial, each
-   ending on slot A with the script in use, its version on record and not
-   staged again: one with a syntax error (`grub-script-check` refuses to stage
-   it, so the test stages it by hand; GRUB falls back to `boot.cfg` in the same
-   boot), one whose entry loads no kernel (the same), and one whose kernel does
-   not find its root (the initramfs restarts after 40 seconds; the next boot
-   finds the trial unconfirmed). And what a power cut leaves boots: a
+   ending on slot A with the script in use and the unconfirmed trial counted
+   (`trials=1 of 2`): one with a syntax error (`grub-script-check` refuses to
+   stage it, so the test stages it by hand, and refuses its retry; GRUB falls
+   back to `boot.cfg` in the same boot); one whose entry loads no kernel (the
+   same), which is staged again, fails its second trial too, and is then
+   failed for good and not staged a third time; and one whose kernel does not
+   find its root (the initramfs restarts after 40 seconds; the next boot finds
+   the trial unconfirmed), which is staged again and its retry not run. A
+   second trial whose kernel restarts by itself is in the unit tests only
+   (`boot-script.bats`). And what a power cut leaves boots: a
    confirmed script not yet in place with `grub.cfg` gone (GRUB reads the
    loader at `EFI/debian/grub.cfg`, which runs it; the system puts `grub.cfg`
    back and finishes), and the change-over cut after its first step (0.17.0's
    `grub.cfg` and the loader at the second path: GRUB reads `grub.cfg`). In step
    3 a script staged before the install is cancelled by it. That is two boots
-   more on arm64 and eight more under KVM (one of them a restart by itself).
+   more on arm64 and nine more under KVM (one of them a restart by itself).
 9. **The released 0.17.0 slot** (amd64-efi base under KVM, last): the published
    image of 0.17.0 is downloaded on the host, checked against its checksum,
    and its slot written into slot B, which then boots through the loader and

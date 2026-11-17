@@ -2,8 +2,8 @@
 # The boot script on the IRONFLOCKOS partition (ADR-0022, docs/build.md "Boot
 # and A/B"). An update writes a root slot only; this brings the booted slot's
 # boot script and loader (/usr/lib/ironflockos/boot/) to the partition, the
-# script with one trial boot, and changes a device installed with 0.17.0 or
-# before over to the loader.
+# script with a trial boot (two at most), and changes a device installed with
+# 0.17.0 or before over to the loader.
 #
 #   boot-script boot    at every boot: a loader that is missing or damaged is
 #                       put back, a trial that failed is recorded, a
@@ -21,10 +21,16 @@
 # EFI/BOOT on the partition: grub.cfg, the loader (EFI/debian/grub.cfg is the
 # same file, GRUB's second path); boot.cfg, the script in use; boot-next.cfg,
 # one on trial. grubenv: IRONFLOCKOS_SCRIPT_TRIAL (staged, tried, failed,
-# good), IRONFLOCKOS_SCRIPT_SLOT (the slot that staged it) and
-# IRONFLOCKOS_SCRIPT_FAILED (the highest version whose trial failed: only a
-# higher one is staged). Each file goes into place whole: written under
-# another name, synced, renamed, and the folder synced.
+# good), IRONFLOCKOS_SCRIPT_SLOT (the slot that staged it),
+# IRONFLOCKOS_SCRIPT_UNCONFIRMED (a version whose first trial boot was not
+# confirmed: it is staged once more) and IRONFLOCKOS_SCRIPT_FAILED (the
+# highest version whose second trial was not confirmed either: only a higher
+# one is staged). A trial boot that is not confirmed may have failed or been
+# cut short by a power cut or a restart; GRUB cannot tell, so a version has
+# two trial boots (the owner's decision, 2026-11-17). The counts are in
+# grubenv, next to the scripts: a factory reset, which clears /data, leaves
+# them. Each file goes into place whole: written under another name, synced,
+# renamed, and the folder synced.
 #
 # Nothing here stops a boot: every failure is a line in the journal, the
 # device runs on the scripts it has, and the exit code is 0 (2 for wrong
@@ -284,29 +290,38 @@ end_trial() {
   fsync "$dir"
 }
 
-# A confirmed trial: boot-next.cfg becomes boot.cfg. While grubenv says good
-# the loader runs boot-next.cfg, so boot.cfg can be replaced in place.
+# A confirmed trial: boot-next.cfg becomes boot.cfg, and a first trial that
+# was not confirmed no longer counts. While grubenv says good the loader runs
+# boot-next.cfg, so boot.cfg can be replaced in place.
 promote() {
   nv=$(next_version)
   if whole "$next" script; then
     place "$next" "$dir" boot.cfg || return
-    end_trial && did "boot script $nv is in use"
+    end_trial IRONFLOCKOS_SCRIPT_UNCONFIRMED= && did "boot script $nv is in use"
   else
     end_trial && did "a confirmed boot script was no longer whole: boot.cfg stays"
   fi
 }
 
-# failed WHY [KEY=VALUE...]: the trial failed; its version is not staged again.
+# failed WHY [KEY=VALUE...]: the trial boot was not confirmed. The first time
+# for a version it counts once and the version is staged again by the same
+# rules (not before the next run that may stage, so never for this boot);
+# the second time it has failed for good and only a higher one is staged.
 failed() {
   why=$1
   shift
   nv=$(next_version)
+  if [ -n "$nv" ] && [ "$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)" != "$nv" ]; then
+    end_trial "IRONFLOCKOS_SCRIPT_UNCONFIRMED=$nv" "$@" &&
+      did "the trial of boot script $nv was not confirmed ($why): first trial not confirmed, one more; boot script $(installed) stays in use"
+    return
+  fi
   high=$(get IRONFLOCKOS_SCRIPT_FAILED)
   case "$high" in '' | *[!0-9]*) high=0 ;; esac
   v=${nv:-0}
   [ "$v" -ge "$high" ] || v=$high
-  end_trial "IRONFLOCKOS_SCRIPT_FAILED=$v" "$@" &&
-    did "the trial of boot script ${nv:-?} failed ($why): boot script $(installed) stays in use, ${nv:-?} is not tried again"
+  end_trial "IRONFLOCKOS_SCRIPT_FAILED=$v" IRONFLOCKOS_SCRIPT_UNCONFIRMED= "$@" &&
+    did "the trial of boot script ${nv:-?} was not confirmed again ($why): failed for good; boot script $(installed) stays in use, ${nv:-?} is not tried again"
 }
 
 judge() {
@@ -346,9 +361,10 @@ judge() {
   esac
 }
 
-# The slot's script for one trial at the next boot, when it is newer than
-# the one in use (or that one did not boot this system) and no newer one
-# failed before.
+# The slot's script for a trial at the next boot, when it is newer than the
+# one in use (or that one did not boot this system) and it or a newer one has
+# not failed for good. A version whose first trial was not confirmed comes
+# here again for its second.
 stage() {
   [ -z "$(get IRONFLOCKOS_SCRIPT_TRIAL)" ] || return 0
   [ "$(kind "$loader")" = loader ] || return 0
@@ -368,7 +384,7 @@ stage() {
   fi
   place "$files/boot.cfg" "$dir" boot-next.cfg || return
   if put IRONFLOCKOS_SCRIPT_TRIAL=staged "IRONFLOCKOS_SCRIPT_SLOT=$booted"; then
-    did "boot script $slot_script staged: the next boot tries it once (in use: $have)"
+    did "boot script $slot_script staged: the next boot tries it, trial $(($(tries "$slot_script") + 1)) of 2 (in use: $have)"
   else
     rm -f "$next"
   fi
@@ -376,7 +392,29 @@ stage() {
 
 # --- the status for the agent ------------------------------------------------
 
+# tries VERSION: its trial boots that were not confirmed (0 or 1; 2 once failed for good).
+tries() {
+  high=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$high" in '' | *[!0-9]*) high=0 ;; esac
+  if [ "$1" -le "$high" ]; then
+    echo 2
+  elif [ "$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "$1" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
 status() {
+  # trials: the trial boots of the version on trial (else of the one whose
+  # trial was not confirmed, else of the one that failed for good, else of
+  # the slot's) that have begun or were not confirmed, of the two it has.
+  tv=$(next_version)
+  [ -n "$tv" ] || tv=$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)
+  [ -n "$tv" ] || tv=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$tv" in '' | *[!0-9]*) tv=$slot_script ;; esac
+  n=$(tries "$tv")
+  case "$(get IRONFLOCKOS_SCRIPT_TRIAL)" in tried | good | failed) [ "$n" -ge 2 ] || n=$((n + 1)) ;; esac
   previous=$(sed -n 's/^result=//p' "$run/boot-script" 2>/dev/null)
   {
     echo "# ironflockos-boot-script (ADR-0022): the boot script on the IRONFLOCKOS partition"
@@ -386,6 +424,9 @@ status() {
     echo "loader=$(version "$loader" loader)"
     echo "trial=$(get IRONFLOCKOS_SCRIPT_TRIAL)"
     echo "trial-version=$(next_version)"
+    echo "trials=$n of 2"
+    echo "trials-of=$tv"
+    echo "unconfirmed=$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)"
     echo "failed=$(get IRONFLOCKOS_SCRIPT_FAILED)"
     echo "result=${result:-$previous}"
   } >"$run/.boot-script.part" && mv -f "$run/.boot-script.part" "$run/boot-script"

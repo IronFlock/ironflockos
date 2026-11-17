@@ -32,8 +32,9 @@ console): Plymouth from the initramfs, the screen read through QMP's
 screendump through the boot and after, a damaged splash.cpio, then the
 device's own picture with its refusals; the boot script (ADR-0022): the partition of a
 device installed with 0.17.0 (its whole grub.cfg) changes over to the loader once the slot is
-proven, the slot's script has one trial and is confirmed, and under KVM three scripts fail their
-trial (a syntax error, no kernel, no root) and the states a power cut leaves boot;
+proven, the slot's script has a trial and is confirmed, and under KVM three scripts fail their
+trial (a syntax error, no kernel, no root; the second fails its second trial too) and the states a
+power cut leaves boot;
 update into slot B with the bundle of the same build (a boot script staged before goes)
 (while RAUC installs, `os update`, `os rollback` and `os reset` refuse;
 installed, `os rollback` and `os reset` refuse the update that waits for its
@@ -3293,11 +3294,13 @@ class Runner:
         self.broken_scripts(version)
         self.cut_states(version)
 
-    def broken_trial(self, broken, version, again, kernels=1):
+    def broken_trial(self, broken, version, again, kernels=1, second=False):
         """The boot after a broken script `broken` was staged, and the one
         after when it restarts by itself (kernels): it ends on slot A with
-        the script in use, the failure is on record, and staged again (the
-        test's again() puts it back in CI_BOOT) the same script is not."""
+        the script in use, and the unconfirmed trial is counted: the first
+        once (the version gets one more), the second for good. Then the
+        test's again() puts the script back in CI_BOOT and the tool runs as
+        at the slot's proof; after the second, it does not stage it."""
         starts = self.vm.kernel_starts()
         self.vm.reboot(self.boot_timeout * kernels)
         self.wait_running()
@@ -3307,43 +3310,60 @@ class Runner:
             raise TestFailure(f"after boot script {broken}: slot {self.booted()}, boot script {self.booted_script()}, "
                               f"expected A and {version}:\n{self.boot_script_says()}")
         trial, failed = self.script_trial()
-        if trial or failed != str(broken):
-            raise TestFailure(f"boot script {broken}'s failure is not on record (trial {trial!r}, failed {failed!r}):\n"
+        unconfirmed = self.grubenv().get("IRONFLOCKOS_SCRIPT_UNCONFIRMED", "")
+        want = ("", str(broken)) if second else (str(broken), failed)
+        if trial or (unconfirmed, failed) != want:
+            raise TestFailure(f"boot script {broken}'s {'second' if second else 'first'} unconfirmed trial is not on "
+                              f"record (trial {trial!r}, unconfirmed {unconfirmed!r}, failed {failed!r}):\n"
                               f"{self.boot_script_says()}")
         self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && cmp {BOOT_DIR}/boot.cfg {SLOT_BOOT}/boot.cfg && "
-                    f"grep -qx 'failed={broken}' /run/ironflockos/boot-script")
+                    f"grep -qx 'trials={2 if second else 1} of 2' /run/ironflockos/boot-script")
         again()
         self.vm.run("rauc status mark-good")
         self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
-        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && "
-                    f"grep -qx 'result=boot script {broken} is not staged: {broken} failed its trial' "
-                    "/run/ironflockos/boot-script")
+        if second:
+            self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && "
+                        f"grep -qx 'result=boot script {broken} is not staged: {broken} failed its trial' "
+                        "/run/ironflockos/boot-script")
+
+    def restaged(self, broken):
+        """After its first unconfirmed trial the script is staged again."""
+        trial, _ = self.script_trial()
+        if trial != "staged":
+            raise TestFailure(f"boot script {broken} was not staged for its second trial:\n{self.boot_script_says()}")
+        self.vm.run(f"cmp {BOOT_DIR}/boot-next.cfg {CI_BOOT}/boot.cfg")
 
     def broken_scripts(self, version):
         """Staged scripts that do not boot, each in a boot of its own: one
         with a syntax error (grub-script-check refuses it, so it is staged by
-        hand), one whose only entry loads no kernel, and one whose kernel
-        does not find its root (the initramfs gives up and restarts,
-        panic=10). GRUB falls back to boot.cfg in the same boot for the first
-        two; for the third the loader finds the trial unconfirmed at the next
-        boot."""
+        hand, and its second trial is refused the same way), one whose only
+        entry loads no kernel, which fails its second trial too and is then
+        not staged any more, and one whose kernel does not find its root (the
+        initramfs gives up and restarts, panic=10; staged again, its second
+        trial is not run here). GRUB falls back to boot.cfg in the same boot
+        for the first two; for the third the loader finds the trial
+        unconfirmed at the next boot."""
         syntax = ("# ironflockos-boot-script-version: 97\nif true; then\nmenuentry \"syntax error\" {\n"
                   "    linux /vmlinuz\n}\n# end of the IronFlockOS boot script\n")
         self.own_script(syntax)
         self.vm.run("rauc status mark-good")
         self.vm.run(f"IRONFLOCKOS_BOOT_FILES={CI_BOOT} {BOOT_SCRIPT_TOOL} proven")
-        self.vm.run(f"test ! -e {BOOT_DIR}/boot-next.cfg && grep -qx "
-                    "'result=boot script 97 is not staged: grub-script-check refused it' /run/ironflockos/boot-script")
+        refused = (f"test ! -e {BOOT_DIR}/boot-next.cfg && grep -qx "
+                   "'result=boot script 97 is not staged: grub-script-check refused it' /run/ironflockos/boot-script")
+        self.vm.run(refused)
         self.hold_boot_files()
         self.vm.run(f"cp {CI_BOOT}/boot.cfg {BOOT_DIR}/boot-next.cfg && grub-editenv {GRUBENV} set "
                     "IRONFLOCKOS_SCRIPT_TRIAL=staged IRONFLOCKOS_SCRIPT_SLOT=A && sync")
         self.broken_trial(97, version, lambda: self.own_script(syntax))
+        self.vm.run(refused)
 
         nothing = ("# ironflockos-boot-script-version: 98\nset timeout=0\nset default=0\nmenuentry \"no kernel\" {\n"
                    "    linux /no-such-kernel\n}\n# end of the IronFlockOS boot script\n")
         self.own_script(nothing)
         self.stage_variant(98)
         self.broken_trial(98, version, lambda: self.own_script(nothing))
+        self.restaged(98)
+        self.broken_trial(98, version, lambda: self.own_script(nothing), second=True)
 
         no_root = "s/root=PARTUUID=[$][{][a-z]*uuid[}]/root=PARTUUID=00000000-0000-0000-0000-000000000000/g"
         self.variant_script(99, no_root)
@@ -3355,7 +3375,9 @@ class Runner:
             text = fh.read()
         if b"ironflockos.boot_script=99" not in text or b"root=PARTUUID=00000000-0000-0000-0000-000000000000" not in text:
             raise TestFailure("no kernel started with boot script 99's command line (console.log)")
-        self.vm.run(f"grub-editenv {GRUBENV} unset IRONFLOCKOS_SCRIPT_FAILED")
+        self.restaged(99)
+        self.restore_boot_files()
+        self.vm.run(f"grub-editenv {GRUBENV} unset IRONFLOCKOS_SCRIPT_FAILED IRONFLOCKOS_SCRIPT_UNCONFIRMED")
 
     def cut_states(self, version):
         """What a power cut can leave, each set up by hand, boots. (1) A

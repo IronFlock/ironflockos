@@ -1,6 +1,7 @@
-# ADR-0022: An OS update renews the boot script on the IRONFLOCKOS partition, with one trial boot
+# ADR-0022: An OS update renews the boot script on the IRONFLOCKOS partition, with a trial boot and one retry
 
-Status: accepted, 2026-11-17. First in the release after IronFlockOS 0.17.0.
+Status: accepted, 2026-11-17 (the retry decided the same day). First in the release after
+IronFlockOS 0.17.0.
 
 ## Context
 
@@ -59,7 +60,7 @@ from Debian's `grub2` source, `2.12-9+deb13u4` read), started by Debian's shim (
    when a variable does not fit, nothing is written and the command fails. An unset
    variable is deleted from the block. It needs a disk device. With RAUC's variables, the
    display setting, a long real-time tuning, the QEMU tests' command line and the three
-   variables below, the block holds about 470 of its 1024 bytes
+   four variables below, the block holds about 500 of its 1024 bytes
    (`test/unit/boot-script.bats`).
 5. **Modules.** The image has `GRUB_MODULES` of `build-efi-images` built in, among them
    `configfile`, `loadenv`, `test`, `regexp`, `probe`, `linux`, `gzio`, `part_gpt`, `fat`,
@@ -99,9 +100,11 @@ whole. The script puts its version on the kernel command line
 (`ironflockos.boot_script=N`), so the running system knows which script booted it:
 none named is 0.17.0's script, `0` the loader's last resort.
 
-`grubenv` gets three variables: `IRONFLOCKOS_SCRIPT_TRIAL` (`staged`, `tried`, `failed`,
-`good` or empty), `IRONFLOCKOS_SCRIPT_SLOT` (the slot that staged the script) and
-`IRONFLOCKOS_SCRIPT_FAILED` (the highest version whose trial failed).
+`grubenv` gets four variables: `IRONFLOCKOS_SCRIPT_TRIAL` (`staged`, `tried`, `failed`,
+`good` or empty), `IRONFLOCKOS_SCRIPT_SLOT` (the slot that staged the script),
+`IRONFLOCKOS_SCRIPT_UNCONFIRMED` (a version whose first trial boot was not confirmed)
+and `IRONFLOCKOS_SCRIPT_FAILED` (the highest version that failed for good). The loader
+reads only the first two; the counts are the service's.
 
 ### The loader
 
@@ -110,7 +113,7 @@ none named is 0.17.0's script, `0` the loader's last resort.
 | empty, `failed`, anything else, or `grubenv` unreadable | | | `boot.cfg` as `grub.cfg` ran before (its menu, timeout and fallback); when it set no `default` (missing, or it defined nothing), the last resort |
 | `staged` | `boot-next.cfg` is there, `IRONFLOCKOS_SCRIPT_SLOT` is the first slot of `ORDER`, that slot is `_OK=1` and `_TRY=0`, and `save_env` works | `tried` | submenu `boot-next.cfg`; then submenu `boot.cfg`, which first writes `failed` and gives the slot back its try; then the last resort |
 | `staged` | otherwise | | as empty |
-| `tried` (the trial's boot was not confirmed) | | `failed`, and `_TRY=0` for `IRONFLOCKOS_SCRIPT_SLOT` | as empty |
+| `tried` (the trial's boot was not confirmed) | | `failed`, and `_TRY=0` for `IRONFLOCKOS_SCRIPT_SLOT` | as empty (the service counts the unconfirmed trial, see the retry) |
 | `good` (confirmed, `boot.cfg` not yet replaced) | | | submenu `boot-next.cfg`, then submenu `boot.cfg`, then the last resort |
 
 The last resort is two menu entries at the end of every menu: the kernel of the first
@@ -145,21 +148,44 @@ choice and good: a trial never shares a boot with a slot's trial.
   (the command line names its version) on its slot and `rauc status mark-good` has
   marked the slot good: `grubenv` gets `good`, `boot-next.cfg` is copied over `boot.cfg`,
   the trial is cleared, `boot-next.cfg` removed.
-- **Failure:** `failed`, or `tried` in a boot that did not run the script on its slot:
-  the trial is cleared with its version in `IRONFLOCKOS_SCRIPT_FAILED` (when the script
-  booted the other slot, its slot gets its try back, as the loader does), and
-  `boot-next.cfg` is removed. The journal says so (`boot-script: the trial of boot script
-  N failed ...`), and `/run/ironflockos/boot-script` names `failed=N`. Only a higher
-  version is staged again.
+- **An unconfirmed trial boot:** `failed`, or `tried` in a boot that did not run the
+  script on its slot. The trial is cleared and `boot-next.cfg` removed (when the script
+  booted the other slot, its slot gets its try back, as the loader does), and the boot
+  counts against the version (the retry, below).
+- **The retry** (the owner's decision, 2026-11-17): a version has two trial boots. A
+  trial boot that is not confirmed may have failed, or been cut short by a power cut or
+  a restart in its first two minutes; GRUB cannot tell these apart, and a power cut must
+  not cost the device that version. The first unconfirmed trial boot puts the version
+  into `IRONFLOCKOS_SCRIPT_UNCONFIRMED`; the journal says `first trial not confirmed, one
+  more`. The version is then staged again by the same rules as the first time (the
+  booted slot proven, first in `ORDER`, good in this boot, no update installed in this
+  boot, `grub-script-check`), so its second trial is never the boot in which the first
+  one was judged, and never shares a boot with a slot's trial. The second unconfirmed
+  trial boot moves the version to `IRONFLOCKOS_SCRIPT_FAILED` (`failed for good` in the
+  journal), and only a higher version is staged. A confirmed trial clears the count; a
+  higher version starts its own (one count, for the last version that missed a trial).
+  An update installed while a script is staged or on trial does not count. A second
+  trial after a boot of the last resort or with a damaged `boot.cfg` is the repair
+  staging above, by the same rules. A script that really fails therefore costs a device
+  two bad boots (four when its kernel does not find its root: each trial restarts once
+  more) instead of one.
+- **Where the counts live:** in `grubenv`, next to the scripts and the slot state, not on
+  `/data`. They hold whether or not `/data` mounts, and the factory reset, which makes
+  `/data` new and leaves these variables, gives no version its tries back: a version
+  that failed for good is not tried again after a reset, so a reset cannot start a
+  loop of bad boots. With every variable at a long value `grubenv` holds about 500 of
+  its 1024 bytes.
 - **An update installed** (RAUC's post-install handler, `boot-script cancel`): a staged
-  script or an open trial goes, a confirmed one is finished, a failed one recorded, and
+  script or an open trial goes without counting, a confirmed one is finished, a trial
+  boot the loader found unconfirmed is counted, and
   nothing is staged or changed over until the next boot. The new slot's first boot runs
   the script in use; the new slot stages its own script once it has proven itself, so
   the two trials never share a boot.
 - Every failure is a journal line; the device runs on the files it has; the units never
   fail. `/run/ironflockos/boot-script` holds `booted=`, `installed=`, `slot=`, `loader=`,
-  `trial=`, `trial-version=`, `failed=` and `result=` (what this boot did), for the agent
-  and the screen report.
+  `trial=`, `trial-version=`, `trials=` (`1 of 2`: the trial boots of the version
+  `trials-of=` that began or were not confirmed), `unconfirmed=`, `failed=` and
+  `result=` (what this boot did), for the agent and the screen report.
 
 The confirmation uses `ironflockos-slot-keep`'s proof, not the agent's connection: a
 device that runs but cannot reach the platform (no network at the site, the platform
@@ -231,13 +257,16 @@ Loaders follow the same rules for scripts, and every loader understands every va
 - `boot.cfg` in use is not protected by a trial: when GRUB cannot load the kernel of any
   of its entries, it waits in its menu as before, and the last resort is then only in
   the menu.
-- A trial boot cut short (a power cut, or a restart by someone, in its first two
-  minutes) counts as failed: that version is not tried again on that device.
-- A script run in a submenu (a trial's boot) that prints an error, for example
-  `serial` on a machine without the port its target names, makes GRUB wait ten seconds
-  before its menu, with a message on the screen.
-- In a trial's boot, Esc in the drawn menu leaves it, and GRUB goes on with the next
-  choice: the script in use, which counts the trial as failed.
+- Two trial boots cut short (a power cut, or a restart by someone, in their first two
+  minutes) fail a version for good on that device, as two real failures do.
+- Known limit, accepted (2026-11-17): a script run in a submenu (a trial's boot) that
+  prints an error, for example `serial` on a machine without the serial port its target
+  names, makes GRUB wait ten seconds before its menu, with "Press any key to
+  continue..." on the screen. GRUB prints every command's error and cannot be kept from
+  it.
+- Known limit, accepted (2026-11-17): in a trial's boot, Esc in the drawn menu leaves
+  it, and GRUB goes on with the next choice, the script in use; the trial boot counts
+  as not confirmed.
 - `grubenv` is written by RAUC, the display setting, the real-time tuning and this
   service with `grub-editenv`, which rewrites the file; two writers at the same moment
   can lose one write, as before.
@@ -265,11 +294,14 @@ Loaders follow the same rules for scripts, and every loader understands every va
 ## Consequences
 
 - Every release's script reaches every device from 0.17.0 on with an ordinary update,
-  one trial boot after the updated slot has proven itself. A device installed with
+  one trial boot after the updated slot has proven itself (two when the first is not
+  confirmed). A device installed with
   0.17.0 changes over by itself; the first machine needs nothing but the update.
-- A script that fails on some hardware costs those devices one boot (one restart more
-  when the kernel does not find its root) and is not tried again; the failure is in the
-  journal and in `/run/ironflockos/boot-script`.
+- A script that fails on some hardware costs those devices two bad boots, its two trial
+  boots (and a restart more for each when the kernel does not find its root), and is
+  then not tried again; each unconfirmed trial is in the journal and in
+  `/run/ironflockos/boot-script`. A power cut or a restart in one trial boot costs
+  nothing but that boot.
 - Boot-script changes are cheap from now on, and the picture GRUB draws (WP-8.8, parked)
   can come this way.
 - Each release keeps both compatibility rules, and the QEMU test proves them.

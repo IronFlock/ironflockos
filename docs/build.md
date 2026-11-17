@@ -204,11 +204,18 @@ one to the partition ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.m
   wrote `tried`; when it boots nothing, GRUB goes on to `boot.cfg` and then to
   the last resort in the same boot. When the boot reaches the proof of
   `ironflockos-slot-keep` (two minutes after `multi-user.target`), it becomes
-  `boot.cfg`. A boot that is not confirmed is the trial's failure: the next
-  boot runs `boot.cfg` and gives the slot back the try the trial took; the
-  version goes to `IRONFLOCKOS_SCRIPT_FAILED` and only a higher one is staged.
-- An update installed while a script is staged cancels it (RAUC's post-install
-  handler). The new slot boots first with the script in use and stages its own
+  `boot.cfg`. A trial boot that is not confirmed (the script failed, or the
+  boot was cut short by a power cut or a restart: GRUB cannot tell) is
+  followed by a boot of `boot.cfg`, and the slot gets back the try the trial
+  took. It counts once against the version (`IRONFLOCKOS_SCRIPT_UNCONFIRMED`,
+  "first trial not confirmed, one more" in the journal), which is staged again
+  by the same rules for a second trial; after a second unconfirmed trial the
+  version goes to `IRONFLOCKOS_SCRIPT_FAILED` ("failed for good") and only a
+  higher one is staged. A script that really fails costs two bad boots. The
+  counts are in `grubenv`, so a factory reset does not give a version its
+  tries back.
+- An update installed while a script is staged cancels it without counting it
+  (RAUC's post-install handler). The new slot boots first with the script in use and stages its own
   once it has proven itself.
 - A device installed with 0.17.0 has the whole script as `grub.cfg`. Once its
   updated slot has proven itself, it changes over: `EFI/debian/grub.cfg` becomes
@@ -218,7 +225,15 @@ one to the partition ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.m
 - At every boot, `ironflockos-boot-script.service` puts back a `grub.cfg` that
   is missing or damaged, from the second path, and finishes what a power cut
   interrupted. `/run/ironflockos/boot-script` says what the device has
-  (`booted=`, `installed=`, `slot=`, `loader=`, `trial=`, `failed=`, `result=`).
+  (`booted=`, `installed=`, `slot=`, `loader=`, `trial=`, `trial-version=`,
+  `trials=` such as `1 of 2` for the version `trials-of=`, `unconfirmed=`,
+  `failed=`, `result=`).
+- Two known limits of a trial boot: on a machine without the serial port its
+  target names, GRUB prints the `serial` command's error and waits ten seconds
+  with "Press any key to continue..." before the script's menu (inside a
+  submenu GRUB waits after any error); and Esc in its drawn menu leaves the
+  script on trial for the script in use, which counts as a trial boot that was
+  not confirmed.
 
 Script versions never go down: after a rollback the newer script stays. So a
 release's slot must boot with the scripts of the releases before it from 0.17.0
@@ -949,7 +964,7 @@ hardening for later.
 Up to 0.17.0 the splash came with a new installation only: the boot script
 is on the IRONFLOCKOS partition, which an update does not write. From the
 release after 0.17.0 on, the updated slot brings its boot script there, with
-one trial boot ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md),
+a trial boot ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md),
 "Boot and A/B"), so a device installed with 0.16.0 or earlier gets the splash
 with that update, one boot after the updated slot has proven itself.
 

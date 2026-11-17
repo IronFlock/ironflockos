@@ -5,7 +5,7 @@ UEFI x86 edge PCs and industrial PCs (master plan, sections 3.2 and 3.7).
 | | |
 |---|---|
 | Boot | UEFI only (no legacy BIOS). Debian's shim (signed by Microsoft) at the removable-media path `EFI/BOOT/BOOTX64.EFI`, Debian's signed GRUB next to it; boots with Secure Boot on or off (ADR-0011) |
-| A/B | RAUC `grub` backend, `grubenv` on the IRONFLOCKOS partition, `rauc.slot=` on the kernel command line. GRUB reads the loader `grub.cfg` (also at `EFI/debian/grub.cfg`), which runs the boot script `boot.cfg`; an OS update brings a newer script there with one trial boot, and a device installed with 0.17.0 changes over by itself (ADR-0022) |
+| A/B | RAUC `grub` backend, `grubenv` on the IRONFLOCKOS partition, `rauc.slot=` on the kernel command line. GRUB reads the loader `grub.cfg` (also at `EFI/debian/grub.cfg`), which runs the boot script `boot.cfg`; an OS update brings a newer script there with a trial boot (and one retry), and a device installed with 0.17.0 changes over by itself (ADR-0022) |
 | Kernel | Debian 13 `linux-image-amd64` (6.12 LTS), `amd64-microcode`, `intel-microcode`; `-rt` images: `linux-image-rt-amd64` (PREEMPT_RT) with `ironflockos-rt-tuning` |
 | Firmware blobs | `firmware-linux-free`, `firmware-misc-nonfree`, `-realtek`, `-iwlwifi`, `-atheros`, `-brcm80211`, `-mediatek`; for Intel graphics and audio `firmware-intel-graphics` and `firmware-sof-signed` (Debian 13 moved them out of `firmware-misc-nonfree`) |
 | Consoles | screen (`tty0`) and first serial port (`ttyS0`, 115200 8N1) |

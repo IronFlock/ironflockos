@@ -329,7 +329,7 @@ colour only: GRUB's picture is WP-8.8, after the release, proven on the panel.
   menu, the firmware entry and the device's own picture came with a new installation
   only. From the release after 0.17.0 on that limit is gone
   ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md)): the updated slot
-  brings its boot script to the partition, with one trial boot once it has proven
+  brings its boot script to the partition, with a trial boot once it has proven
   itself, and a device installed with 0.17.0 or before (from ADR-0011 on) changes over
   by itself. A device installed before ADR-0011 keeps its script.
 - The first picture a person sees is the firmware's, for as long as the firmware takes
