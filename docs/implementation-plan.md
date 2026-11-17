@@ -822,7 +822,8 @@ Only after CUDA on the RT kernel is verified on the chosen JetPack release: `nvb
   that NVIDIA does not name: `tools/initrd-sources.py` found their 57 packages and
   versions by content, `targets/jetson-orin/initrd.sources` records them with the
   initrd's hash, which the build checks, and the release publishes their source packages.
-  Open: setting `JETSON_RELEASE` on the owner's word; FlockFlasher's licence
+  The `nvidia` variant's `libnvidia-container` gets its tag's source too (LGPL-3.0
+  parts). Open: setting `JETSON_RELEASE` on the owner's word; FlockFlasher's licence
   screen, with WP-6.6, when FlockFlasher writes a Jetson image.
 
 ## Phase 7: Generic arm64 EFI, decommission, documentation

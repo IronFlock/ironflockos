@@ -34,7 +34,9 @@ docker-compose-plugin     none Apache-2.0 (https://github.com/docker/compose)
 # NVIDIA's repositories (profiles/nvidia).
 nvidia-graphics-drivers   none NVIDIA's proprietary driver licence: binaries only
 nvidia-persistenced       none MIT (https://github.com/NVIDIA/nvidia-persistenced)
-libnvidia-container       none Apache-2.0 (https://github.com/NVIDIA/libnvidia-container)
+# libnvidia-container has LGPL-3.0 parts (its copyright file, COPYING.LESSER
+# in the tag): the tag's source. The toolkit is Apache-2.0 only.
+libnvidia-container       upstream https://github.com/NVIDIA/libnvidia-container/archive/refs/tags/v{upstream}.tar.gz
 nvidia-container-toolkit  none Apache-2.0 (https://github.com/NVIDIA/nvidia-container-toolkit)
 nvidia-modprobe           upstream https://github.com/NVIDIA/nvidia-modprobe/archive/refs/tags/{upstream}.tar.gz
 # The open kernel modules the build makes from nvidia-kernel-open-dkms

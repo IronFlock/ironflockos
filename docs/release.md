@@ -289,7 +289,8 @@ source of every package in its images next to them:
   `getPublishedSources` and `sourceFileUrls`, with each file's SHA-256).
 - The packages from Docker's and NVIDIA's repositories have no source packages.
   [`release/sources`](../release/sources) decides each one: the upstream
-  tarball (`nvidia-modprobe`, the NVIDIA kernel modules the build makes);
+  tarball (`nvidia-modprobe`, the NVIDIA kernel modules the build makes, and
+  `libnvidia-container` of the `nvidia` variant, which has LGPL-3.0 parts);
   `l4t`, a file `targets/jetson-orin/bsp.conf` pins by SHA-256 (NVIDIA's
   `public_sources.tbz2` of the L4T release, the `libnvidia-container` source
   of the Jetson toolkit's tag, [below](#jetson)); or no source, with the

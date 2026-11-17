@@ -319,6 +319,39 @@ EOF
   [[ "$output" == *$'nvidia-l4t-x\t39.2.1-20260806224157\t-\t-\t-\tOPEN: no decision yet'* ]]
 }
 
+# The source packages of today's images (the other targets) that
+# release/sources decides, at the pins of 0.18.0.
+today_decided() {
+  printf '%s\t%s\n' \
+    docker-ce '5:29.10.0-1~debian.13~trixie' containerd.io '2.4.2-4~debian.13~trixie' \
+    docker-buildx-plugin '0.39.0-1~debian.13~trixie' docker-compose-plugin '5.7.1-1~debian.13~trixie' \
+    nvidia-graphics-drivers 620.70.06-1 nvidia-persistenced 620.70.06-1 libnvidia-container 1.20.1-1 \
+    nvidia-container-toolkit 1.20.1-1 nvidia-modprobe 620.70.06-1 ironflockos-nvidia-modules 620.70.06-1
+}
+
+@test "today's images: release/sources decides as before, but for libnvidia-container, which now gets its tag's source" {
+  today_decided >"$tmp/list"
+  run bash "$sources" plan "$tmp/list"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    docker-ce '5:29.10.0-1~debian.13~trixie' - - - 'Apache-2.0 (https://github.com/docker/docker-ce-packaging)' \
+    containerd.io '2.4.2-4~debian.13~trixie' - - - 'Apache-2.0 (https://github.com/containerd/containerd)' \
+    docker-buildx-plugin '0.39.0-1~debian.13~trixie' - - - 'Apache-2.0 (https://github.com/docker/buildx)' \
+    docker-compose-plugin '5.7.1-1~debian.13~trixie' - - - 'Apache-2.0 (https://github.com/docker/compose)' \
+    nvidia-graphics-drivers 620.70.06-1 - - - "NVIDIA's proprietary driver licence: binaries only" \
+    nvidia-persistenced 620.70.06-1 - - - 'MIT (https://github.com/NVIDIA/nvidia-persistenced)' \
+    libnvidia-container 1.20.1-1 upstream/libnvidia-container/libnvidia-container_1.20.1.tar.gz \
+    https://github.com/NVIDIA/libnvidia-container/archive/refs/tags/v1.20.1.tar.gz - - \
+    nvidia-container-toolkit 1.20.1-1 - - - 'Apache-2.0 (https://github.com/NVIDIA/nvidia-container-toolkit)' \
+    nvidia-modprobe 620.70.06-1 upstream/nvidia-modprobe/nvidia-modprobe_620.70.06.tar.gz \
+    https://github.com/NVIDIA/nvidia-modprobe/archive/refs/tags/620.70.06.tar.gz - - \
+    ironflockos-nvidia-modules 620.70.06-1 upstream/ironflockos-nvidia-modules/ironflockos-nvidia-modules_620.70.06.tar.gz \
+    https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/620.70.06.tar.gz - -)" ]
+  # the one difference to 0.18.0's releases: libnvidia-container was
+  # "none Apache-2.0" and is the upstream tarball of its tag
+  grep -qx 'libnvidia-container       upstream https://github.com/NVIDIA/libnvidia-container/archive/refs/tags/v{upstream}.tar.gz' "$repo/release/sources"
+}
+
 @test "an L4T package of another version than the pinned sources fails the plan" {
   printf 'nvidia-l4t-kernel\t6.8.12-tegra-39.2.2-20261001000000\n' >"$tmp/list"
   run bash "$sources" plan "$tmp/list" ubuntu-noble
