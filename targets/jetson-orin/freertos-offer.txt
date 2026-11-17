@@ -14,12 +14,19 @@ FreeRTOS exception. Its text comes with the package, in
 licence for the package, the NVIDIA Driver License Agreement, is
 /usr/share/doc/nvidia-l4t-bootloader/copyright.
 
-Offer of the source code: IronFlock provides the FreeRTOS source code of this
-firmware, with the modifications NVIDIA made, to everyone who receives this
-image or bundle. It is published with each IronFlockOS release for Jetson at
+Offer of the source code: @CONTACT_NAME@ provides the FreeRTOS source code
+of this firmware, with the modifications NVIDIA made, to everyone who
+receives this image or bundle. It is published with each IronFlockOS release
+for Jetson at
 
-  @DL_BASE@/ironflockos/sources/l4t-@L4T_VERSION@/
+  @DL_BASE@/ironflockos/sources/@L4T_SOURCES_DIR@/
 
 in NVIDIA's public_sources.tbz2 of Jetson Linux @L4T_VERSION@ (the archives
-FreeRTOSV8.1.2_src.tbz2 and spe-freertos-bsp.tbz2), and IronFlock sends it on
-request.
+FreeRTOSV8.1.2_src.tbz2 and spe-freertos-bsp.tbz2), and @CONTACT_NAME@ sends
+it on request. To request it, write to
+
+  @CONTACT_NAME@
+  @CONTACT_STREET@
+  @CONTACT_CITY@
+
+or send an e-mail to @CONTACT_EMAIL@.

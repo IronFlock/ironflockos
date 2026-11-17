@@ -225,6 +225,43 @@ valid_target() { case "$1" in amd64-efi | arm64-efi | rpi-arm64 | jetson-orin) r
 valid_variant() { case "$1" in base | nvidia | installer) return 0 ;; *) return 1 ;; esac }
 valid_kernel() { case "$1" in std | rt) return 0 ;; *) return 1 ;; esac }
 
+# release_images: the images of a release, as <target>-<variant>[-rt], one
+# per line: RELEASE_IMAGES of build/release.conf (load it first), and
+# JETSON_RELEASE_IMAGES while JETSON_RELEASE is true (the repository
+# variable, which release.yml passes on; docs/release.md "Jetson").
+release_images() {
+  : "${RELEASE_IMAGES:?load build/release.conf first}"
+  # shellcheck disable=SC2086 # space-separated lists of image names
+  printf '%s\n' $RELEASE_IMAGES
+  if [ "${JETSON_RELEASE:-}" = true ]; then
+    # shellcheck disable=SC2086
+    printf '%s\n' ${JETSON_RELEASE_IMAGES:?no JETSON_RELEASE_IMAGES in build/release.conf}
+  fi
+}
+
+# l4t_sources_dir: the directory below DL_BASE/ironflockos/sources/ where a
+# Jetson release mirrors NVIDIA's sources of L4T_VERSION (bsp.conf, loaded
+# first): the source offers in the image and build/sources.sh both take it
+# from here.
+l4t_sources_dir() {
+  [[ "${L4T_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "L4T_VERSION is not R.M.m: load targets/jetson-orin/bsp.conf first"
+  printf 'l4t-%s\n' "$L4T_VERSION"
+}
+
+# load_contact FILE: the contact of the source offers (release/contact):
+# CONTACT_NAME, CONTACT_STREET, CONTACT_CITY and CONTACT_EMAIL, each set, or
+# it fails and names the empty ones.
+load_contact() {
+  local k empty=()
+  load_conf "$1"
+  for k in CONTACT_NAME CONTACT_STREET CONTACT_CITY CONTACT_EMAIL; do
+    [ -n "${!k:-}" ] || empty+=("$k")
+  done
+  [ "${#empty[@]}" -eq 0 ] ||
+    die "$1: the contact of the source offers is incomplete (empty: ${empty[*]}): a Jetson image or release needs the legal entity, its postal address and its e-mail address"
+  [[ "$CONTACT_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[a-z]+$ ]] || die "$1: CONTACT_EMAIL is not an e-mail address: $CONTACT_EMAIL"
+}
+
 # image_id TARGET VARIANT KERNEL: ironflockos-<target>-<variant>[-rt], the RAUC
 # compatible and IMAGE_ID of the image.
 image_id() {

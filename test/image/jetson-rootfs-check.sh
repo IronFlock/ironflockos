@@ -189,8 +189,20 @@ check "NVIDIA's capsules for the Orin NX and Nano (TEGRA_BL_3767*) and the AGX O
 check "the capsules match the package's own checksums (unchanged)" \
   bash -c "cd '$root' && grep ' opt/ota_package/t23x/' var/lib/dpkg/info/nvidia-l4t-bootloader.md5sums | md5sum -c --quiet"
 offer=$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
-check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION" \
-  bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -q '/ironflockos/sources/l4t-$L4T_VERSION/\$' '$offer'"
+load_conf "$src/build/release.conf"
+load_contact "$src/release/contact"
+mirror=$DL_BASE/ironflockos/sources/$(l4t_sources_dir)/
+check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION, at the mirror $mirror" \
+  bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -qxF '  $mirror' '$offer'"
+check "the source offer names $CONTACT_NAME, its postal address and $CONTACT_EMAIL (release/contact)" \
+  bash -c "grep -qxF '  $CONTACT_NAME' '$offer' && grep -qxF '  $CONTACT_STREET' '$offer' && grep -qxF '  $CONTACT_CITY' '$offer' && grep -qF '$CONTACT_EMAIL' '$offer'"
+# NVIDIA's Agreement as NVIDIA's packages carry it: nvidia-l4t-core's copy
+# is the BSP's text byte for byte (bsp.conf BSP_LICENSE_SHA256), so every
+# image and bundle carries the Agreement the release publishes as
+# NVIDIA-LICENSE.txt.
+agreement=$root/usr/share/doc/nvidia-l4t-core/Tegra_Software_License_Agreement-Tegra-Linux.txt.gz
+check "NVIDIA's Agreement in the image is the BSP's, byte for byte ($(basename "$agreement"))" \
+  bash -c "[ \"\$(gzip -dc '$agreement' | sha256sum | cut -d' ' -f1)\" = '$BSP_LICENSE_SHA256' ]"
 check "NVIDIA's Agreement and FreeRTOS licence come with the package" \
   bash -c "test -s '$root/usr/share/doc/nvidia-l4t-bootloader/copyright' && test -s '$root/usr/share/doc/nvidia-l4t-bootloader/LICENSE.bl_update_payload.gz'"
 check "tegra-capsule is executable, rauc-post-install stages with it and keeps nv_boot_control.conf" \

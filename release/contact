@@ -1,0 +1,11 @@
+# The contact in IronFlockOS's source offers: the legal entity that offers
+# the source, its postal address and its e-mail address for requests, as
+# IronFlock gave them on 2026-11-17 (docs/jetson-licence-review.md,
+# question 6). Plain KEY=value data. build/tegra-capsules.sh writes them
+# into the FreeRTOS statement of the Jetson image; a Jetson build, and a
+# release with Jetson files, fails while one of them is empty
+# (build/jetson-release.sh check).
+CONTACT_NAME=IronFlock GmbH
+CONTACT_STREET=Taunusanlage 8
+CONTACT_CITY=60329 Frankfurt am Main
+CONTACT_EMAIL=legal@ironflock.com
