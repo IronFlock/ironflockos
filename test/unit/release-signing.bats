@@ -197,7 +197,8 @@ print(len(entries))
   [ "$(grep -c 'name: ${{ inputs.prefix }}-' "$wf/image.yml")" -eq 1 ]
   [ "$(grep -c 'name: ${{ inputs.prefix }}-' "$wf/installer.yml")" -eq 1 ]
   [ "$(grep -c 'pattern: ${{ inputs.prefix }}-' "$wf/installer.yml")" -eq 1 ]
-  [ "$(grep -c 'prefix: ${{ inputs.prefix }}' "$wf/build.yml")" -eq 2 ]
+  # the images, the Jetson image (while JETSON_RELEASE is true) and the sticks
+  [ "$(grep -c 'prefix: ${{ inputs.prefix }}' "$wf/build.yml")" -eq 3 ]
 }
 
 @test "the assets job downloads the release's checksums and SBOMs, not its images" {

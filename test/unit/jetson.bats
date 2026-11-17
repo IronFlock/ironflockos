@@ -29,6 +29,14 @@ setup() {
   [ "$fpr" = "$L4T_SIGNER_FINGERPRINT" ]
 }
 
+@test "NVIDIA's apt key is the file NVIDIA serves, one key block without a licence header" {
+  key=$t/apt/jetson-ota-public.asc
+  [ "$(head -n 1 "$key")" = "-----BEGIN PGP PUBLIC KEY BLOCK-----" ]
+  [ "$(tail -n 1 "$key")" = "-----END PGP PUBLIC KEY BLOCK-----" ]
+  [ "$(grep -c -- '-----BEGIN' "$key")" -eq 1 ]
+  ! grep -qiE 'SPDX|LicenseRef|copyright|license' "$key"
+}
+
 @test "the L4T pins belong to the BSP's release" {
   load_conf "$t/bsp.conf"
   [[ "$L4T_PACKAGE_VERSION" == "$L4T_VERSION-"* ]]

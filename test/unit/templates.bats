@@ -10,8 +10,8 @@ setup() {
   load_conf "$repo/targets/amd64-efi/target.conf"
 }
 
-@test "grub.cfg renders without holes and passes the slot to RAUC" {
-  run render "$repo/targets/amd64-efi/grub/grub.cfg"
+@test "the boot script renders without holes and passes the slot to RAUC" {
+  run render "$repo/targets/amd64-efi/grub/boot.cfg"
   [ "$status" -eq 0 ]
   [[ "$output" != *"@"*"@"* ]]
   [[ "$output" == *"rauc.slot=\${slot}"* ]]

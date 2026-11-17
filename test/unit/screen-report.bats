@@ -276,7 +276,10 @@ P
   a_boot
   . "$repo/build/lib.sh"
   load_conf "$repo/targets/amd64-efi/target.conf"
-  render "$repo/targets/amd64-efi/grub/grub.cfg" >"$r/boot/efi/EFI/BOOT/grub.cfg"
+  render "$repo/targets/amd64-efi/grub/boot.cfg" >"$r/boot/efi/EFI/BOOT/boot.cfg"
+  render "$repo/targets/amd64-efi/grub/loader.cfg" >"$r/boot/efi/EFI/BOOT/grub.cfg"
+  mkdir -p "$r/run/ironflockos"
+  printf '# ironflockos-boot-script\nbooted=2\ninstalled=2\n' >"$r/run/ironflockos/boot-script"
   hash='$6$saltsalt$ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh'
   mkdir -p "$r/opt/ironflock/device-init"
   echo '{"user": {"name": "owner"}}' >"$r/opt/ironflock/device-init/installed.json"
@@ -285,9 +288,10 @@ P
   chmod 600 "$r/data/ironflockos/console-password"
   echo "getty@tty2.service loaded active running Getty on tty2" >"$tmp/units"
   screen_report
-  [[ "$output" == *'boot menu "Start with messages": in grub.cfg'* ]]
-  [[ "$output" == *'boot menu "Firmware setup": in grub.cfg'* ]]
-  [[ "$output" == *"grub.cfg: with the splash"* ]]
+  [[ "$output" == *'boot menu "Start with messages": in boot.cfg'* ]]
+  [[ "$output" == *'boot menu "Firmware setup": in boot.cfg'* ]]
+  [[ "$output" == *"boot script (boot.cfg): with the splash"* ]]
+  [[ "$output" == *"ironflockos-boot-script: booted=2 installed=2 "* ]]
   [[ "$output" == *"login prompts: getty@tty2.service (logind"* ]]
   [[ "$output" == *"console password: owner's password is a SHA-512 hash; the file: -rw-------"* ]]
   [[ "$output" != *saltsalt* ]]

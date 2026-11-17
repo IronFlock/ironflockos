@@ -6,13 +6,18 @@
 #                                    tools/catalog build -files reads
 #   publish.sh meta    DIR META      what the later jobs need of DIR, into META:
 #                                    SHA256SUMS, files.tsv (files, above), the
-#                                    SBOMs, sources.tsv (every image's source
-#                                    packages) and catalog/<image>/ (each
-#                                    image's os-release, sizes and payloads):
-#                                    no image or bundle
+#                                    SBOMs, sources.tsv (the source packages
+#                                    of every image of Debian), with Jetson
+#                                    images sources-<distro>.tsv (those of
+#                                    another distribution's images, by their
+#                                    target's DISTRO) and catalog/<image>/
+#                                    (each image's os-release, sizes and
+#                                    payloads): no image or bundle
 #   publish.sh stage   DIR VERSION   DIR's images, bundles, SBOMs, hardware
 #                                    lists and checksums to the staging tree
-#                                    STAGING/<version>/
+#                                    STAGING/<version>/; with Jetson files
+#                                    also NVIDIA's Agreement and the flash
+#                                    kit, after the checks of jetson_files
 #   publish.sh promote VERSION       the staged release to the live tree
 #                                    LIVE/<version>/; a live file is never
 #                                    replaced by different bytes
@@ -34,6 +39,7 @@
 # every one of them must succeed.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/.." && pwd)
 # shellcheck source=build/lib.sh
 . "$here/lib.sh"
 load_conf "$here/release.conf"
@@ -60,11 +66,58 @@ storage() {
 put() { storage cp --quiet --cache-control="public, max-age=0" "$1" "$2"; }
 
 # files DIR: the published files of a release, one per line: also each
-# image's hardware list (.modules.alias.gz), which the catalog names.
+# image's hardware list (.modules.alias.gz), which the catalog names; of a
+# Jetson image (docs/release.md "Jetson") its slot image, the flash kit and
+# NVIDIA's Agreement, NVIDIA-LICENSE.txt. No two files of one name.
 files() {
-  find "$1" -mindepth 2 -maxdepth 2 -type f \
+  local list dup
+  list=$(find "$1" -mindepth 2 -maxdepth 2 -type f \
     \( -name '*.img.gz' -o -name '*.raucb' -o -name '*.cdx.json' -o -name '*.os-release' -o -name '*.packages.tsv' \
-    -o -name '*.modules.alias.gz' \) | sort
+    -o -name '*.modules.alias.gz' -o -name '*.rootfs.ext4.zst' -o -name 'ironflockos-jetson-flash-kit-*.tar.gz' \
+    -o -name NVIDIA-LICENSE.txt \) | sort)
+  dup=$(printf '%s\n' "$list" | sed 's|.*/||' | sort | uniq -d)
+  [ -z "$dup" ] || die "two files of one name in $1: $(echo "$dup" | tr '\n' ' ')"
+  [ -z "$list" ] || printf '%s\n' "$list"
+}
+
+# jetson_files DIR VERSION: a release with Jetson files (a directory with a
+# slot image, .rootfs.ext4.zst) has, next to it, the flash kit of VERSION
+# and NVIDIA's Agreement byte for byte as bsp.conf pins it; and its release
+# notes (IRONFLOCKOS_NOTES, default release-notes/) link the Agreement and,
+# while target.conf says HARDWARE_TESTED=no, say that the Jetson image is
+# not yet proven on hardware. Nothing without Jetson files.
+jetson_files() {
+  local dir=$1 version=$2 d n=0 want
+  for d in "$dir"/*/; do
+    compgen -G "$d*.rootfs.ext4.zst" >/dev/null || continue
+    n=$((n + 1))
+    [ -f "${d}ironflockos-jetson-flash-kit-$version.tar.gz" ] ||
+      die "$(basename "$d") has no flash kit ironflockos-jetson-flash-kit-$version.tar.gz (build/jetson-release.sh files)"
+    [ -f "${d}NVIDIA-LICENSE.txt" ] || die "$(basename "$d") has no NVIDIA-LICENSE.txt, NVIDIA's Agreement (build/jetson-release.sh files)"
+    want=$(sed -n 's/^BSP_LICENSE_SHA256=//p' "${IRONFLOCKOS_BSP_CONF:-$repo/targets/jetson-orin/bsp.conf}")
+    [ "$(sha256sum <"${d}NVIDIA-LICENSE.txt" | cut -d' ' -f1)" = "$want" ] ||
+      die "$(basename "$d")/NVIDIA-LICENSE.txt is not NVIDIA's Agreement as bsp.conf pins it (BSP_LICENSE_SHA256)"
+  done
+  [ "$n" -gt 0 ] || return 0
+  bash "$here/jetson-release.sh" notes "$version"
+  log "Jetson files of $n image(s): the flash kit, NVIDIA's Agreement as pinned, and release notes that link it"
+}
+
+# image_distro IMAGE_ID: the distribution of the image's target (its
+# target.conf's DISTRO, default debian-trixie).
+image_distro() {
+  local t distro
+  for t in "$repo"/targets/*/; do
+    t=$(basename "$t")
+    case "$1" in
+      ironflockos-"$t"-*)
+        distro=$(sed -n 's/^DISTRO=//p' "$repo/targets/$t/target.conf")
+        printf '%s\n' "${distro:-debian-trixie}"
+        return 0
+        ;;
+    esac
+  done
+  die "$1 is an image of no target in targets/"
 }
 
 # sums DIR: the release's SHA256SUMS, by file name.
@@ -163,11 +216,29 @@ case "$cmd" in
     list_files "$dir" >"$meta/files.tsv"
     awk -F'\t' '{ print $1 "  " $3 }' "$meta/files.tsv" >"$meta/SHA256SUMS"
     cp "$dir"/*/*.cdx.json "$meta/"
-    cat "$dir"/*/*.sources.tsv | LC_ALL=C sort -u >"$meta/sources.tsv"
+    # The source packages by the archive they come from: Debian's (and the
+    # Raspberry Pi's) in sources.tsv, Ubuntu's of the Jetson images in
+    # sources-ubuntu-noble.tsv (build/sources.sh plan LIST DISTRO).
+    : >"$meta/sources.tsv"
+    for d in "$dir"/ironflockos-*/; do
+      distro=$(image_distro "$(basename "$d")")
+      for f in "$d"*.sources.tsv; do
+        [ -f "$f" ] || continue
+        case "$distro" in
+          debian-trixie) cat "$f" >>"$meta/sources.tsv" ;;
+          *) cat "$f" >>"$meta/sources-$distro.tsv" ;;
+        esac
+      done
+    done
+    for f in "$meta"/sources*.tsv; do
+      LC_ALL=C sort -u -o "$f" "$f"
+    done
     for d in "$dir"/ironflockos-*/; do
       id=$(basename "$d")
       mkdir "$meta/catalog/$id"
-      cp "$d"*.os-release "$d"*.sizes "$meta/catalog/$id/"
+      cp "$d"*.os-release "$meta/catalog/$id/"
+      # Jetson's slot image has no disk sizes.
+      if compgen -G "$d*.sizes" >/dev/null; then cp "$d"*.sizes "$meta/catalog/$id/"; fi
       if compgen -G "$d*.payloads" >/dev/null; then cp "$d"*.payloads "$meta/catalog/$id/"; fi
     done
     log "$(wc -l <"$meta/files.tsv" | tr -d ' ') files of $(find "$meta/catalog" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ') images listed in $meta"
@@ -175,6 +246,7 @@ case "$cmd" in
   stage)
     dir=${2:?usage: publish.sh stage DIR VERSION} version=${3:?usage: publish.sh stage DIR VERSION}
     [ -n "$(files "$dir")" ] || die "no release files in $dir"
+    jetson_files "$dir" "$version"
     # One SHA256SUMS for the release, by file name.
     sums=$(mktemp)
     trap 'rm -f "$sums"' EXIT
@@ -210,7 +282,7 @@ case "$cmd" in
     # package share their orig tarball, maybe one from the archive and one
     # from snapshot.debian.org)
     awk -F'\t' '$3 != "-" { print $3 "\t" $4 "\t" $5 }' "$plan" | LC_ALL=C sort -t "$(printf '\t')" -k 1,1 -u >"$tmp/files"
-    bad=$(cut -f 1 "$tmp/files" | grep -vE '^(debian|raspberrypi|upstream)/[a-z0-9][a-z0-9+.-]*/[A-Za-z0-9][A-Za-z0-9+._~-]*$' || true)
+    bad=$(cut -f 1 "$tmp/files" | grep -vE '^((debian|raspberrypi|ubuntu|upstream)/[a-z0-9][a-z0-9+.-]*|l4t-[0-9]+\.[0-9]+\.[0-9]+)/[A-Za-z0-9][A-Za-z0-9+._~-]*$' || true)
     [ -z "$bad" ] || die "not a path in the pool: $(echo "$bad" | tr '\n' ' ')"
     if [ "${DRY_RUN:-0}" = 1 ]; then
       cp "$tmp/files" "$tmp/new"

@@ -14,8 +14,13 @@
 #   writes the QSPI firmware from;
 # - nvidia-l4t-bootloader is L4T_PACKAGE_VERSION, and the tree's
 #   /etc/nv_tegra_release names L4T_VERSION;
-# - the package's licence texts are there.
-# Then it writes /usr/share/doc/ironflockos/FreeRTOS-source-offer.txt.
+# - the package's licence texts are there;
+# - the contact of the source offers (release/contact) is complete.
+# Then it writes /usr/share/doc/ironflockos/FreeRTOS-source-offer.txt, which
+# offers the source at the mirror a Jetson release fills
+# (DL_BASE/ironflockos/sources/<l4t_sources_dir>/, as build/sources.sh puts
+# it there) and names the contact, and fails when the statement does not
+# carry both.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 src=$(cd "$here/.." && pwd)
@@ -27,7 +32,9 @@ root=$1
 load_conf "$src/targets/jetson-orin/target.conf"
 load_conf "$src/targets/jetson-orin/bsp.conf"
 load_conf "$src/build/release.conf"
+load_contact "${IRONFLOCKOS_CONTACT:-$src/release/contact}"
 : "${L4T_VERSION:?}" "${L4T_PACKAGE_VERSION:?}" "${DL_BASE:?}"
+mirror=$DL_BASE/ironflockos/sources/$(l4t_sources_dir)/
 [[ "$L4T_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "bsp.conf: L4T_VERSION $L4T_VERSION is not R.M.m"
 want=$(((BASH_REMATCH[1] << 16) | (BASH_REMATCH[2] << 8) | BASH_REMATCH[3]))
 dir=$root/opt/ota_package/t23x
@@ -81,6 +88,12 @@ doc=$root/usr/share/doc/nvidia-l4t-bootloader
   die "$doc lacks NVIDIA's licence texts (copyright, LICENSE.bl_update_payload.gz)"
 
 mkdir -p "$root/usr/share/doc/ironflockos"
-L4T_VERSION=$L4T_VERSION L4T_PACKAGE_VERSION=$L4T_PACKAGE_VERSION DL_BASE=$DL_BASE \
-  render "$src/targets/jetson-orin/freertos-offer.txt" >"$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt"
+offer=$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
+L4T_SOURCES_DIR=$(l4t_sources_dir) render "${IRONFLOCKOS_FREERTOS_OFFER:-$src/targets/jetson-orin/freertos-offer.txt}" >"$offer"
+# The statement names the mirror the release fills and the contact.
+grep -qxF "  $mirror" "$offer" || die "the FreeRTOS statement does not offer the source at the mirror $mirror"
+for line in "$CONTACT_NAME" "$CONTACT_STREET" "$CONTACT_CITY"; do
+  grep -qxF "  $line" "$offer" || die "the FreeRTOS statement does not name the contact's \"$line\" (release/contact)"
+done
+grep -qF "$CONTACT_EMAIL" "$offer" || die "the FreeRTOS statement does not name $CONTACT_EMAIL (release/contact)"
 log "boot firmware: $n capsules of L4T $L4T_VERSION from nvidia-l4t-bootloader $have, with the FreeRTOS statement"

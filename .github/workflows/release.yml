@@ -105,16 +105,27 @@ jobs:
         run: |
           mv .harness "$RUNNER_TEMP/harness"
           "$RUNNER_TEMP/harness/scripts/release.sh" mode
+      # With the Jetson images while the repository variable JETSON_RELEASE
+      # is true (release_images in build/lib.sh, docs/release.md "Jetson").
       - name: the release's images
         id: images
+        env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
         run: |
           . build/lib.sh
           load_conf build/release.conf
-          # shellcheck disable=SC2086 # a space-separated list of image names
-          images=$(printf '%s\n' $RELEASE_IMAGES)
+          images=$(release_images)
           echo "images=$(jq -Rnc '[inputs]' <<<"$images")" >> "$GITHUB_OUTPUT"
-          # The installer has no bundle.
-          echo "attest=$(jq -Rnc '{include: [inputs | {image: ., subjects: (if endswith("-installer") then "*.img.gz" else "*.img.gz\n*.raucb" end)}]}' <<<"$images")" >> "$GITHUB_OUTPUT"
+          # The installer has no bundle; a Jetson image is its slot image,
+          # its bundle and its flash kit.
+          echo "attest=$(jq -Rnc '{include: [inputs | {image: ., subjects: (if endswith("-installer") then "*.img.gz" elif startswith("jetson-") then "*.rootfs.ext4.zst\n*.raucb\nironflockos-jetson-flash-kit-*.tar.gz" else "*.img.gz\n*.raucb" end)}]}' <<<"$images")" >> "$GITHUB_OUTPUT"
+      # A release with Jetson files starts only with what it needs: the
+      # contact of the source offers, every source package decided, the
+      # source pins, release notes that link NVIDIA's Agreement
+      # (build/jetson-release.sh check).
+      - name: a release with Jetson files can start (while JETSON_RELEASE is true)
+        if: vars.JETSON_RELEASE == 'true' && (steps.mode.outputs.mode == 'release' || steps.mode.outputs.mode == 'dry-run')
+        run: build/jetson-release.sh check "$(tr -d '[:space:]' < VERSION)"
 
   # Where the images come from (ADR-0018, docs/release.md "Reused images").
   # A release looks for the dry run of its pull request (build/reuse.sh
@@ -153,6 +164,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 10
         env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
@@ -173,6 +185,8 @@ jobs:
         if: steps.download.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 10
+        env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
         run: |
           mkdir images
           for d in dl/release-image-*; do mv "$d" "images/ironflockos-${d#dl/release-image-}"; done
@@ -310,6 +324,7 @@ jobs:
           persist-credentials: false
       - name: this run, as the release run checks the run it reuses
         env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           RUN: ${{ github.run_id }}
@@ -324,6 +339,7 @@ jobs:
           github-token: ${{ github.token }}
       - name: every file as the manifest lists it
         env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           COMMIT: ${{ github.sha }}
         run: |
@@ -395,6 +411,8 @@ jobs:
           run-id: ${{ env.REUSED == 'true' && needs.source.outputs.run-id || github.run_id }}
           github-token: ${{ github.token }}
       - name: every file as the manifest lists it
+        env:
+          JETSON_RELEASE: ${{ vars.JETSON_RELEASE }}
         run: build/reuse.sh files manifest/build.tsv out "$IMAGE"
       - name: authenticate the bundle signer (release only)
         if: env.MODE == 'release' && env.BUNDLE == 'true'
@@ -592,9 +610,17 @@ jobs:
         with:
           name: release-meta-${{ env.MODE }}
           path: meta
+      # Debian's and the Raspberry Pi's source packages; with Jetson images
+      # also Ubuntu's (sources-ubuntu-noble.tsv) and NVIDIA's
+      # (release/sources: the L4T sources tarball, libnvidia-container).
       - name: where the source of every package is
         run: |
           build/sources.sh plan meta/sources.tsv > sources.plan
+          for f in meta/sources-*.tsv; do
+            [ -f "$f" ] || continue
+            distro=${f#meta/sources-}
+            build/sources.sh plan "$f" "${distro%.tsv}" >> sources.plan
+          done
           echo "$(cut -f 1,2 sources.plan | sort -u | wc -l) source packages, $(awk -F'\t' '$3 != "-"' sources.plan | wc -l) files" |
             tee -a "$GITHUB_STEP_SUMMARY"
       - name: authenticate the publisher (release only)

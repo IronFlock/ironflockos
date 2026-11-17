@@ -7,3 +7,5 @@ Type=oneshot
 # Not a failed unit when RAUC is busy with an update: the next boot is the
 # updated slot's anyway.
 ExecStart=-/usr/bin/rauc status mark-good
+# The same proof confirms a boot script on trial in this boot (ADR-0022).
+ExecStart=-/usr/lib/ironflockos/boot-script kept

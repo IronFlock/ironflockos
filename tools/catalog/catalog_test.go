@@ -27,9 +27,14 @@ func release(t *testing.T, version, buildID string, ids ...string) string {
 		d := filepath.Join(dir, id)
 		must(t, os.MkdirAll(d, 0o755))
 		name := id + "-" + version
-		must(t, os.WriteFile(filepath.Join(d, name+".img.gz"), []byte("image of "+name), 0o644))
-		must(t, os.WriteFile(filepath.Join(d, name+".sizes"), []byte("raw_size=4564471808\nmin_disk_size=9934209024\n"), 0o644))
-		must(t, os.WriteFile(filepath.Join(d, name+".modules.alias.gz"), []byte("hardware of "+name), 0o644))
+		if strings.HasPrefix(id, "ironflockos-jetson-orin-") {
+			// Jetson: slot A's filesystem image and the bundle, no disk.
+			must(t, os.WriteFile(filepath.Join(d, name+".rootfs.ext4.zst"), []byte("slot image of "+name), 0o644))
+		} else {
+			must(t, os.WriteFile(filepath.Join(d, name+".img.gz"), []byte("image of "+name), 0o644))
+			must(t, os.WriteFile(filepath.Join(d, name+".sizes"), []byte("raw_size=4564471808\nmin_disk_size=9934209024\n"), 0o644))
+			must(t, os.WriteFile(filepath.Join(d, name+".modules.alias.gz"), []byte("hardware of "+name), 0o644))
+		}
 		if !strings.HasSuffix(id, "-installer") {
 			must(t, os.WriteFile(filepath.Join(d, name+".raucb"), []byte("bundle of "+name), 0o644))
 		} else {
@@ -181,7 +186,8 @@ func fileListOf(t *testing.T, dir string) string {
 	must(t, err)
 	for _, p := range matches {
 		base := filepath.Base(p)
-		if !strings.HasSuffix(base, ".img.gz") && !strings.HasSuffix(base, ".raucb") && !strings.HasSuffix(base, ".modules.alias.gz") {
+		if !strings.HasSuffix(base, ".img.gz") && !strings.HasSuffix(base, ".raucb") && !strings.HasSuffix(base, ".modules.alias.gz") &&
+			!strings.HasSuffix(base, ".rootfs.ext4.zst") {
 			continue
 		}
 		a, err := artifact(p, "")
@@ -590,5 +596,118 @@ func TestAReleaseWithoutSizesStaysValid(t *testing.T) {
 	c.Releases["1.0.0"].Images["ironflockos-amd64-efi-base"] = img
 	if err := c.Validate(); err == nil {
 		t.Fatal("another image's hardware list: valid")
+	}
+}
+
+// Jetson (BOOTLOADER=tegra): the catalog names the slot image the flash kit
+// takes and the bundle the device-agent installs; no disk sizes, no hardware
+// list, and no board for FlockFlasher, which writes disk images only.
+func TestAJetsonImage(t *testing.T) {
+	ids := []string{"ironflockos-amd64-efi-base", "ironflockos-jetson-orin-base"}
+	dir := release(t, "1.0.0", "20261120T095512Z-g1a2b3c4", ids...)
+	hashed, err := buildRelease(dir, repoRoot, "1.0.0", "https://dl.example/ironflockos/1.0.0", "1.5.8", nil)
+	must(t, err)
+	j := hashed.Images["ironflockos-jetson-orin-base"]
+	if j.Target != "jetson-orin" || j.Architecture != "arm64" || j.Variant != "base" || j.Kernel != "std" {
+		t.Fatalf("jetson %+v", j)
+	}
+	if j.Image.URL != "https://dl.example/ironflockos/1.0.0/ironflockos-jetson-orin-base-1.0.0.rootfs.ext4.zst" ||
+		j.Image.Size != int64(len("slot image of ironflockos-jetson-orin-base-1.0.0")) || !sha256Re.MatchString(j.Image.SHA256) {
+		t.Fatalf("slot image %+v", j.Image)
+	}
+	if j.Bundle == nil || j.Bundle.Compatible != "ironflockos-jetson-orin-base" ||
+		j.Bundle.URL != "https://dl.example/ironflockos/1.0.0/ironflockos-jetson-orin-base-1.0.0.raucb" {
+		t.Fatalf("bundle %+v", j.Bundle)
+	}
+	data, err := json.Marshal(j)
+	must(t, err)
+	if bytes.Contains(data, []byte("raw_size")) || bytes.Contains(data, []byte("min_disk_size")) || bytes.Contains(data, []byte("modules_alias")) {
+		t.Fatalf("a slot image has no disk sizes and no hardware list: %s", data)
+	}
+
+	// The same from the file list the promote job reads (with the files
+	// a release publishes besides: the Agreement and the flash kit).
+	dir = release(t, "1.0.0", "20261120T095512Z-g1a2b3c4", ids...)
+	list := fileListOf(t, dir)
+	extra := fmt.Sprintf("%s\t9\tNVIDIA-LICENSE.txt\n%s\t9\tironflockos-jetson-flash-kit-1.0.0.tar.gz\n", strings.Repeat("a", 64), strings.Repeat("b", 64))
+	data, err = os.ReadFile(list)
+	must(t, err)
+	must(t, os.WriteFile(list, append(data, extra...), 0o644))
+	files, err := readFileList(list)
+	must(t, err)
+	listed, err := buildRelease(dir, repoRoot, "1.0.0", "https://dl.example/ironflockos/1.0.0", "1.5.8", files)
+	must(t, err)
+	a, _ := json.Marshal(hashed)
+	b, _ := json.Marshal(listed)
+	if !bytes.Equal(a, b) {
+		t.Fatalf("from the list:\n%s\nhashed:\n%s", b, a)
+	}
+	if bytes.Contains(b, []byte("NVIDIA-LICENSE")) || bytes.Contains(b, []byte("flash-kit")) {
+		t.Fatalf("the catalog names images and bundles only: %s", b)
+	}
+
+	// The catalog: valid, and FlockFlasher's boards do not show it.
+	c, err := merge(nil, "1.0.0", "test", hashed, boardDefs(t), time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC))
+	must(t, err)
+	for _, board := range c.Boards {
+		for _, i := range board.LatestImages {
+			if strings.Contains(i.ImageID, "jetson") {
+				t.Fatalf("board %s shows %s", board.Model, i.ImageID)
+			}
+		}
+	}
+
+	// Without its slot image or its bundle, it is refused.
+	for _, name := range []string{"ironflockos-jetson-orin-base-1.0.0.rootfs.ext4.zst", "ironflockos-jetson-orin-base-1.0.0.raucb"} {
+		short := FileList{}
+		for k, v := range files {
+			if k != name {
+				short[k] = v
+			}
+		}
+		if _, err := buildRelease(dir, repoRoot, "1.0.0", "https://dl.example/ironflockos/1.0.0", "1.5.8", short); err == nil {
+			t.Fatalf("accepted a Jetson image without %s", name)
+		}
+	}
+}
+
+func TestValidateRefusesAMisshapenSlotImage(t *testing.T) {
+	ids := []string{"ironflockos-amd64-efi-base", "ironflockos-jetson-orin-base"}
+	rel, err := buildRelease(release(t, "1.0.0", "20261120T095512Z-g1a2b3c4", ids...), repoRoot, "1.0.0", "https://dl.example/ironflockos/1.0.0", "1.5.8", nil)
+	must(t, err)
+	c, err := merge(nil, "1.0.0", "test", rel, boardDefs(t), time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC))
+	must(t, err)
+	const id = "ironflockos-jetson-orin-base"
+	for name, change := range map[string]func(img *Image){
+		"disk sizes":      func(img *Image) { img.Image.RawSize, img.Image.MinDiskSize = 1, 1 },
+		"a hardware list": func(img *Image) { a := img.Image.Artifact; img.ModulesAlias = &a },
+		"no bundle":       func(img *Image) { img.Bundle = nil },
+		"another name":    func(img *Image) { img.Image.URL = strings.Replace(img.Image.URL, "-1.0.0.", "-1.0.1.", 1) },
+		"another variant": func(img *Image) { img.Image.URL = strings.Replace(img.Image.URL, ".rootfs.ext4.zst", ".img.zst", 1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := c
+			bad.Releases = map[string]Release{}
+			r := c.Releases["1.0.0"]
+			r.Images = map[string]Image{}
+			for k, v := range c.Releases["1.0.0"].Images {
+				r.Images[k] = v
+			}
+			img := r.Images[id]
+			change(&img)
+			r.Images[id] = img
+			bad.Releases["1.0.0"] = r
+			if err := bad.Validate(); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+	// A board that would show a slot image: FlockFlasher cannot write it.
+	bad := c
+	bad.Boards = append([]Board{}, c.Boards...)
+	j := c.Releases["1.0.0"].Images[id]
+	bad.Boards = append(bad.Boards, Board{Model: "jetson-orin", LatestImages: []ImageInfo{{Variant: "base", ImageID: id, File: lastSegment(j.Image.URL)}}})
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "no disk image FlockFlasher can write") {
+		t.Fatalf("a board with a slot image: %v", err)
 	}
 }

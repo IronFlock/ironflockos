@@ -81,6 +81,27 @@ check "none of the L4T packages kept out (extlinux, desktop configs, apt source)
   test -z "$(installed nvidia-l4t-extlinux nvidia-l4t-configs nvidia-l4t-apt-source)"
 check "no Ubuntu kernel next to NVIDIA's" test -z "$(installed 'linux-image-*')"
 check "the preinstall marker is gone" test ! -e "$root/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall"
+# NVIDIA's Agreement and notices stay with its packages (WP-6.8;
+# docs/jetson-licence-review.md, point 1). A doc directory may be a link to
+# another package's; it is followed inside the tree.
+doc_copyright() { # doc_copyright PACKAGE: its copyright file is in the tree
+  local d=$root/usr/share/doc/$1 to
+  if [ -L "$d" ]; then
+    to=$(readlink "$d")
+    case "$to" in
+      /*) d=$root$to ;;
+      *) d=$root/usr/share/doc/$to ;;
+    esac
+  fi
+  [ -s "$d/copyright" ]
+}
+mapfile -t l4t_installed < <(installed 'nvidia-l4t-*')
+l4t_no_copyright=()
+for p in "${l4t_installed[@]}"; do
+  doc_copyright "$p" || l4t_no_copyright+=("$p")
+done
+check "every installed nvidia-l4t-* package (${#l4t_installed[@]}) has its copyright file${l4t_no_copyright[*]:+; missing: ${l4t_no_copyright[*]}}" \
+  bash -c "[ ${#l4t_installed[@]} -gt 0 ] && [ ${#l4t_no_copyright[@]} -eq 0 ]"
 
 # --- kernel ----------------------------------------------------------------
 check "/boot/Image and /boot/initrd" bash -c "[ -s '$root/boot/Image' ] && [ -s '$root/boot/initrd' ]"
@@ -105,6 +126,27 @@ check "Ubuntu's sources are signed by ubuntu-archive-keyring" \
   grep -qx 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' "$sl/ubuntu.sources"
 check "the keyring is in the tree" test -s "$root/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 check "the L4T pins are kept" grep -q "Pin: version $L4T_PACKAGE_VERSION" "$root/etc/apt/preferences.d/ironflockos-l4t.pref"
+
+# --- names: IronFlockOS's where a person sees them, Ubuntu's technical
+# references kept (build/branding.sh; WP-6.8) ---------------------------------
+check "os-release: no UBUNTU_* field, no Ubuntu URL" bash -c "! grep -qE '^UBUNTU_|ubuntu\.com|launchpad' '$osr'"
+check "the login prompt and issue.net are the overlay's, IronFlockOS's" \
+  bash -c "cmp -s '$src/overlay/etc/issue' '$root/etc/issue' && cmp -s '$src/overlay/etc/issue.net' '$root/etc/issue.net'"
+lsb=$root/etc/lsb-release
+check "lsb-release: IronFlockOS, based on Ubuntu 24.04; release and codename Ubuntu's" \
+  bash -c "grep -qx DISTRIB_ID=IronFlockOS '$lsb' && grep -qx DISTRIB_RELEASE=24.04 '$lsb' && grep -qE '^DISTRIB_DESCRIPTION=\"IronFlockOS [^\"]+, based on Ubuntu 24.04\"\$' '$lsb'"
+check "no Ubuntu legal notice at the first login (/etc/legal)" test ! -e "$root/etc/legal"
+check "no Ubuntu logo (base-files' /usr/share/pixmaps/ubuntu-logo*)" bash -c "! compgen -G '$root/usr/share/pixmaps/ubuntu-logo*'"
+check "no login banner script names Ubuntu or Canonical (/etc/update-motd.d)" \
+  bash -c "! grep -rqiE 'ubuntu|canonical' '$root/etc/update-motd.d'"
+check "nothing fetches motd.ubuntu.com, and motd-news is masked" \
+  bash -c "! grep -rIq 'motd\.ubuntu\.com' '$root/etc' '$root/usr/lib/systemd' && [ \"\$(systemctl --root='$root' is-enabled motd-news.timer)\" = masked ]"
+# Nothing the image installs depends on these; Recommends are not installed.
+check "no Ubuntu Pro client, nothing else that advertises Canonical's services at login or in apt" \
+  test -z "$(installed ubuntu-pro-client ubuntu-advantage-tools ubuntu-pro-client-l10n motd-news-config \
+    update-notifier-common ubuntu-release-upgrader-core landscape-common)"
+check "no apt hook of Ubuntu Pro (ESM notices in apt's output)" test ! -e "$root/etc/apt/apt.conf.d/20apt-esm-hook.conf"
+check "Ubuntu's origin file stays (dpkg's vendor)" test -s "$root/etc/dpkg/origins/ubuntu"
 
 # --- IronFlockOS ---------------------------------------------------------------
 check "RAUC: compatible, the custom backend, APP and APP_b" \
@@ -147,8 +189,23 @@ check "NVIDIA's capsules for the Orin NX and Nano (TEGRA_BL_3767*) and the AGX O
 check "the capsules match the package's own checksums (unchanged)" \
   bash -c "cd '$root' && grep ' opt/ota_package/t23x/' var/lib/dpkg/info/nvidia-l4t-bootloader.md5sums | md5sum -c --quiet"
 offer=$root/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
-check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION" \
-  bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -q '/ironflockos/sources/l4t-$L4T_VERSION/\$' '$offer'"
+load_conf "$src/build/release.conf"
+load_contact "$src/release/contact"
+mirror=$DL_BASE/ironflockos/sources/$(l4t_sources_dir)/
+initrd_sha=$(sed -n 's/^INITRD_SHA256=//p' "$src/targets/jetson-orin/initrd.sources")
+check "NVIDIA's initrd is the one targets/jetson-orin/initrd.sources lists the Ubuntu programs of ($initrd_sha)" \
+  bash -c "[ \"\$(sha256sum <'$root/boot/initrd' | cut -d' ' -f1)\" = '$initrd_sha' ]"
+check "the FreeRTOS statement and source offer, for L4T $L4T_VERSION, at the mirror $mirror" \
+  bash -c "grep -q 'FreeRTOS V8.1.2' '$offer' && grep -qxF '  $mirror' '$offer'"
+check "the source offer names $CONTACT_NAME, its postal address and $CONTACT_EMAIL (release/contact)" \
+  bash -c "grep -qxF '  $CONTACT_NAME' '$offer' && grep -qxF '  $CONTACT_STREET' '$offer' && grep -qxF '  $CONTACT_CITY' '$offer' && grep -qF '$CONTACT_EMAIL' '$offer'"
+# NVIDIA's Agreement as NVIDIA's packages carry it: nvidia-l4t-core's copy
+# is the BSP's text byte for byte (bsp.conf BSP_LICENSE_SHA256), so every
+# image and bundle carries the Agreement the release publishes as
+# NVIDIA-LICENSE.txt.
+agreement=$root/usr/share/doc/nvidia-l4t-core/Tegra_Software_License_Agreement-Tegra-Linux.txt.gz
+check "NVIDIA's Agreement in the image is the BSP's, byte for byte ($(basename "$agreement"))" \
+  bash -c "[ \"\$(gzip -dc '$agreement' | sha256sum | cut -d' ' -f1)\" = '$BSP_LICENSE_SHA256' ]"
 check "NVIDIA's Agreement and FreeRTOS licence come with the package" \
   bash -c "test -s '$root/usr/share/doc/nvidia-l4t-bootloader/copyright' && test -s '$root/usr/share/doc/nvidia-l4t-bootloader/LICENSE.bl_update_payload.gz'"
 check "tegra-capsule is executable, rauc-post-install stages with it and keeps nv_boot_control.conf" \

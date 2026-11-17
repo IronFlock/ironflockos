@@ -8,6 +8,15 @@ DISTRO_MIRROR=http://ports.ubuntu.com/ubuntu-ports
 DISTRO_SECURITY_MIRROR=http://ports.ubuntu.com/ubuntu-ports
 DISTRO_COMPONENTS="main restricted universe multiverse"
 DISTRO_KEYRING=/usr/share/keyrings/ubuntu-archive-keyring.gpg
+# Where a release finds the source packages of the image (build/sources.sh,
+# docs/release.md "Source code"): Ubuntu's primary archive and its security
+# archive, whose source indexes are signed with the same archive key. The
+# ports archive serves the same indexes and files; a version that has left
+# them comes from Launchpad (LAUNCHPAD_API), which keeps every version ever
+# published, with each file's SHA-256.
+DISTRO_SOURCE_MIRROR=http://archive.ubuntu.com/ubuntu
+DISTRO_SOURCE_SECURITY_MIRROR=http://security.ubuntu.com/ubuntu
+LAUNCHPAD_API=https://api.launchpad.net/1.0
 
 # Docker CE (download.docker.com), the versions of the Debian pins.
 DOCKER_MIRROR=https://download.docker.com/linux/ubuntu

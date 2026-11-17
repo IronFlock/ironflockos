@@ -1,0 +1,17 @@
+
+Written offer: many programs in this system are under the GNU General Public
+License or the GNU Lesser General Public License. For at least three years
+from the day @CONTACT_NAME@ last distributed IronFlockOS @IRONFLOCKOS_VERSION@,
+in any way (a download, an update over the air, an appliance's mirror, a
+device that came with it installed), @CONTACT_NAME@ offers any third party a
+complete machine-readable copy of the corresponding source code of those
+programs, for a charge no more than its cost of physically performing that
+distribution. The same source is published at no charge at the address of
+SOURCES above. To request it, write to
+
+  @CONTACT_NAME@
+  @CONTACT_STREET@
+  @CONTACT_CITY@
+
+or send an e-mail to @CONTACT_EMAIL@, and name the release (VERSION_ID in
+/etc/os-release).

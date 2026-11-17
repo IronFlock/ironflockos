@@ -35,6 +35,10 @@ type Bundle struct {
 // which it becomes a working device (build/lib.sh min_disk_size: every
 // partition of the layout, 1 GiB of /data). Both in bytes, from the build's
 // <image-id>-<version>.sizes. Releases up to 0.14.0 have neither.
+// On Jetson (BOOTLOADER=tegra), which has no disk image (NVIDIA's tools
+// write the disk), it is the slot image <image-id>-<version>.rootfs.ext4.zst
+// that the flash kit takes, without sizes; readers that write disks skip it,
+// as it is no .img.gz.
 type DiskImage struct {
 	Artifact
 	RawSize     int64 `json:"raw_size,omitempty"`
@@ -215,24 +219,35 @@ func artifactOf(files FileList, dir, name, url string) (a Artifact, ok bool, err
 	return a, ok, nil
 }
 
-// targetArch reads ARCH from targets/<target>/target.conf.
-func targetArch(repo, target string) (string, error) {
+// targetConf reads ARCH and BOOTLOADER from targets/<target>/target.conf.
+func targetConf(repo, target string) (arch, bootloader string, err error) {
 	fields, err := osRelease(filepath.Join(repo, "targets", target, "target.conf"))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if fields["ARCH"] == "" {
-		return "", fmt.Errorf("targets/%s/target.conf has no ARCH", target)
+		return "", "", fmt.Errorf("targets/%s/target.conf has no ARCH", target)
 	}
-	return fields["ARCH"], nil
+	return fields["ARCH"], fields["BOOTLOADER"], nil
 }
+
+// The image file of a target: a disk image, or on Jetson (BOOTLOADER=tegra)
+// slot A's filesystem image, which the flash kit writes with NVIDIA's tools.
+const (
+	diskImageSuffix = ".img.gz"
+	slotImageSuffix = ".rootfs.ext4.zst"
+)
+
+func isSlotImage(url string) bool { return strings.HasSuffix(url, slotImageSuffix) }
 
 // buildRelease reads one release from dir: one directory per image as the
 // release pipeline leaves them (<id>/ with <id>-<version>.img.gz, its
 // raw size and minimum disk size in <id>-<version>.sizes, its hardware list
 // <id>-<version>.modules.alias.gz, the .raucb but for the installer,
 // <id>-<version>.os-release, and for the installer <id>-<version>.payloads,
-// the image ids it carries one per line).
+// the image ids it carries one per line). A Jetson image (BOOTLOADER=tegra
+// in its target.conf) has <id>-<version>.rootfs.ext4.zst and the .raucb,
+// and neither sizes nor a hardware list.
 // Files are published below baseURL. The images, bundles and hardware
 // lists are hashed from dir, or taken from files when it is not nil (the
 // files may then be missing from dir).
@@ -273,31 +288,41 @@ func buildRelease(dir, repo, version, baseURL, minAgent string, files FileList) 
 		case rel.BuildID != osr["BUILD_ID"]:
 			return Release{}, fmt.Errorf("%s has BUILD_ID %s, another image %s: not one build", id, osr["BUILD_ID"], rel.BuildID)
 		}
-		arch, err := targetArch(repo, target)
+		arch, bootloader, err := targetConf(repo, target)
 		if err != nil {
 			return Release{}, err
 		}
+		slot := bootloader == "tegra"
+		if slot && variant == "installer" {
+			return Release{}, fmt.Errorf("%s: %s has no installer", id, target)
+		}
 		img := Image{Target: target, Variant: variant, Kernel: kernel, Architecture: arch}
-		a, ok, err := artifactOf(files, filepath.Join(dir, id), name+".img.gz", baseURL+"/"+name+".img.gz")
+		suffix := diskImageSuffix
+		if slot {
+			suffix = slotImageSuffix
+		}
+		a, ok, err := artifactOf(files, filepath.Join(dir, id), name+suffix, baseURL+"/"+name+suffix)
 		if err != nil {
 			return Release{}, err
 		}
 		if !ok {
-			return Release{}, fmt.Errorf("%s has no image (%s.img.gz)", id, name)
+			return Release{}, fmt.Errorf("%s has no image (%s%s)", id, name, suffix)
 		}
 		img.Image.Artifact = a
-		img.Image.RawSize, img.Image.MinDiskSize, err = diskSizes(filepath.Join(dir, id, name+".sizes"))
-		if err != nil {
-			return Release{}, fmt.Errorf("%s: %w", id, err)
+		if !slot {
+			img.Image.RawSize, img.Image.MinDiskSize, err = diskSizes(filepath.Join(dir, id, name+".sizes"))
+			if err != nil {
+				return Release{}, fmt.Errorf("%s: %w", id, err)
+			}
+			aliases, ok, err := artifactOf(files, filepath.Join(dir, id), name+".modules.alias.gz", baseURL+"/"+name+".modules.alias.gz")
+			if err == nil && !ok {
+				err = fmt.Errorf("%s.modules.alias.gz is missing", name)
+			}
+			if err != nil {
+				return Release{}, fmt.Errorf("%s: its hardware list: %w", id, err)
+			}
+			img.ModulesAlias = &aliases
 		}
-		aliases, ok, err := artifactOf(files, filepath.Join(dir, id), name+".modules.alias.gz", baseURL+"/"+name+".modules.alias.gz")
-		if err == nil && !ok {
-			err = fmt.Errorf("%s.modules.alias.gz is missing", name)
-		}
-		if err != nil {
-			return Release{}, fmt.Errorf("%s: its hardware list: %w", id, err)
-		}
-		img.ModulesAlias = &aliases
 		bundle, ok, err := artifactOf(files, filepath.Join(dir, id), name+".raucb", baseURL+"/"+name+".raucb")
 		switch {
 		case err != nil:
@@ -507,7 +532,16 @@ func (c Catalog) Validate() error {
 					errs = append(errs, fmt.Errorf("%s %s: url, sha256 or size", v, id))
 				}
 			}
-			if !strings.HasSuffix(img.Image.URL, "/"+id+"-"+v+".img.gz") {
+			switch {
+			case isSlotImage(img.Image.URL):
+				// A Jetson slot image: an updatable image of its own, no disk.
+				if !strings.HasSuffix(img.Image.URL, "/"+id+"-"+v+slotImageSuffix) {
+					errs = append(errs, fmt.Errorf("%s %s: the slot image is not %s-%s%s", v, id, id, v, slotImageSuffix))
+				}
+				if img.Image.RawSize != 0 || img.Image.MinDiskSize != 0 || img.ModulesAlias != nil || img.Bundle == nil {
+					errs = append(errs, fmt.Errorf("%s %s: a slot image has a bundle, and no disk sizes or hardware list", v, id))
+				}
+			case !strings.HasSuffix(img.Image.URL, "/"+id+"-"+v+diskImageSuffix):
 				errs = append(errs, fmt.Errorf("%s %s: the image is not %s-%s.img.gz", v, id, id, v))
 			}
 			// Both or neither (releases up to 0.14.0); the disk holds the image.
@@ -531,6 +565,12 @@ func (c Catalog) Validate() error {
 	for _, b := range c.Boards {
 		if len(b.LatestImages) == 0 || b.LatestImages[0].Variant != "base" {
 			errs = append(errs, fmt.Errorf("board %s: its first image is not base", b.Model))
+		}
+		// FlockFlasher writes disk images only.
+		for _, i := range b.LatestImages {
+			if !strings.HasSuffix(i.File, diskImageSuffix) {
+				errs = append(errs, fmt.Errorf("board %s: %s is no disk image FlockFlasher can write", b.Model, i.File))
+			}
 		}
 	}
 	return errors.Join(errs...)

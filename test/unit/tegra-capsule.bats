@@ -695,7 +695,55 @@ built_tree() {
   grep -q 'FreeRTOS V8.1.2' "$offer"
   grep -q '/ironflockos/sources/l4t-39.2.1/$' "$offer"
   grep -q '^  https://' "$offer"
-  ! grep -q '@' "$offer"
+  ! grep -qE '@[A-Z][A-Z0-9_]*@' "$offer"
+}
+
+@test "build: the statement offers the source at the mirror the release fills, and names the contact of release/contact" {
+  grep -qx 'L4T_VERSION=39.2.1' "$repo/targets/jetson-orin/bsp.conf" || skip "the fake capsules are 39.2.1"
+  built_tree
+  run bash "$repo/build/tegra-capsules.sh" "$dir/tree"
+  [ "$status" -eq 0 ]
+  offer=$dir/tree/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt
+  # shellcheck source=build/lib.sh
+  . "$repo/build/lib.sh"
+  load_conf "$repo/build/release.conf"
+  load_conf "$repo/targets/jetson-orin/bsp.conf"
+  # the mirror's place, as build/sources.sh puts NVIDIA's sources there
+  grep -qxF "  $DL_BASE/ironflockos/sources/$(l4t_sources_dir)/" "$offer"
+  [ "$(l4t_sources_dir)" = l4t-39.2.1 ]
+  # the contact as IronFlock gave it, the entity as the one that offers
+  grep -qx '  IronFlock GmbH' "$offer"
+  grep -qx '  Taunusanlage 8' "$offer"
+  grep -qx '  60329 Frankfurt am Main' "$offer"
+  grep -q 'legal@ironflock.com' "$offer"
+  grep -q '^Offer of the source code: IronFlock GmbH provides the FreeRTOS source code' "$offer"
+  # the facts stay; no promise the owner has not made
+  grep -q 'FreeRTOS V8.1.2' "$offer"
+  grep -q 'FreeRTOSV8.1.2_src.tbz2 and spe-freertos-bsp.tbz2' "$offer"
+  ! grep -qiE 'three years|valid for|charge|cost' "$offer"
+}
+
+@test "build: an emptied contact, or a statement without the mirror or the contact, fails it" {
+  grep -qx 'L4T_VERSION=39.2.1' "$repo/targets/jetson-orin/bsp.conf" || skip "the fake capsules are 39.2.1"
+  built_tree
+  sed 's/^CONTACT_EMAIL=.*/CONTACT_EMAIL=/' "$repo/release/contact" >"$dir/contact"
+  IRONFLOCKOS_CONTACT=$dir/contact run bash "$repo/build/tegra-capsules.sh" "$dir/tree"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the contact of the source offers is incomplete (empty: CONTACT_EMAIL)"* ]]
+  sed 's/^\(CONTACT_[A-Z]*\)=.*/\1=/' "$repo/release/contact" >"$dir/contact"
+  IRONFLOCKOS_CONTACT=$dir/contact run bash "$repo/build/tegra-capsules.sh" "$dir/tree"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"empty: CONTACT_NAME CONTACT_STREET CONTACT_CITY CONTACT_EMAIL"* ]]
+  # a statement that names another place than the mirror
+  sed 's|@L4T_SOURCES_DIR@|l4t-@L4T_VERSION@-old|' "$repo/targets/jetson-orin/freertos-offer.txt" >"$dir/offer.txt"
+  IRONFLOCKOS_FREERTOS_OFFER=$dir/offer.txt run bash "$repo/build/tegra-capsules.sh" "$dir/tree"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not offer the source at the mirror"* ]]
+  # a statement without the postal address
+  grep -v '@CONTACT_STREET@' "$repo/targets/jetson-orin/freertos-offer.txt" >"$dir/offer.txt"
+  IRONFLOCKOS_FREERTOS_OFFER=$dir/offer.txt run bash "$repo/build/tegra-capsules.sh" "$dir/tree"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not name the contact's \"Taunusanlage 8\""* ]]
 }
 
 @test "build: a capsule of another release fails it (lock-step with the BSP pin)" {

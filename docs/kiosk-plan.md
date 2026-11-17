@@ -324,13 +324,14 @@ colour only: GRUB's picture is WP-8.8, after the release, proven on the panel.
 
 ## Known limits
 
-- `grub.cfg` is on the IRONFLOCKOS partition, which an update does not write. The kernel
-  parameters of the splash, the hidden menu, the firmware entry and the device's own
-  picture therefore come with a new installation. A device installed earlier keeps the
-  text boot after an update. Changing `grub.cfg` on installed devices would be a work
-  package of its own; until then a change to it reaches a device through an installer
-  stick only, as `ironflock os install` does not replace a system that is IronFlockOS
-  already.
+- Up to 0.17.0, `grub.cfg` on the IRONFLOCKOS partition, which an update does not
+  write, was the whole boot script: the kernel parameters of the splash, the hidden
+  menu, the firmware entry and the device's own picture came with a new installation
+  only. From the release after 0.17.0 on that limit is gone
+  ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md)): the updated slot
+  brings its boot script to the partition, with a trial boot once it has proven
+  itself, and a device installed with 0.17.0 or before (from ADR-0011 on) changes over
+  by itself. A device installed before ADR-0011 keeps its script.
 - The first picture a person sees is the firmware's, for as long as the firmware takes
   (nine seconds on the first machine). IronFlockOS cannot change it; the PC's maker sets
   it, to the same logo or to black.

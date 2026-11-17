@@ -66,6 +66,16 @@ if [ -n "${IRONFLOCKOS_DIRTY:-}" ]; then
   sed -i 's/^BUILD_ID=\(.*\)$/BUILD_ID=\1-dirty/' "$ROOT/usr/lib/os-release"
 fi
 ln -sf ../usr/lib/os-release "$ROOT/etc/os-release"
+# The login prompt, lsb-release and the login banner name IronFlockOS, not the
+# distribution (docs/build.md, "Identity"; WP-6.8).
+bash "$here/branding.sh" "$ROOT" "$IRONFLOCKOS_VERSION"
+# The written offer of the GPL and LGPL source, by the contact of the source
+# offers (release/contact), after the directions to SOURCES in the image's
+# copyright file (docs/release.md, "Source code").
+load_contact "$src/release/contact"
+IRONFLOCKOS_VERSION=$IRONFLOCKOS_VERSION render "$src/release/source-offer.txt" >>"$ROOT/usr/share/doc/ironflockos/copyright"
+grep -qF "$CONTACT_EMAIL" "$ROOT/usr/share/doc/ironflockos/copyright" ||
+  die "the image's copyright file does not carry the written source offer (release/source-offer.txt)"
 # Every device generates its own machine-id on its first boot; RAUC's
 # post-install handler carries it into the other slot.
 printf 'uninitialized\n' >"$ROOT/etc/machine-id"
@@ -95,6 +105,14 @@ case "$BOOTLOADER" in
     # kernel's graphics drivers make it larger (docs/build.md, "The screen").
     [ -s "$ROOT/usr/share/plymouth/themes/ironflockos/ironflock.png" ] || die "the splash's theme is not in the tree"
     log "initramfs: $(du -h --apparent-size "$ROOT/boot/initrd.img-$kver" | cut -f1)"
+    # --- the boot script and its loader, in the slot (ADR-0022) -----------
+    # build/mkimage.sh puts them on the IRONFLOCKOS partition of a new
+    # installation; ironflockos-boot-script brings a newer one there from a
+    # slot an update wrote.
+    mkdir -p "$ROOT/usr/lib/ironflockos/boot"
+    for f in loader.cfg boot.cfg; do
+      render "$target_dir/grub/$f" >"$ROOT/usr/lib/ironflockos/boot/$f"
+    done
     ;;
   rpi)
     # --- the Pi firmware's boot files (build/mkimage-rpi.sh makes boot-a) --
@@ -136,6 +154,13 @@ case "$BOOTLOADER" in
     # gives it); rauc-post-install points a slot it writes at that slot.
     [ -s "$ROOT/boot/Image" ] || die "no /boot/Image (nvidia-l4t-kernel)"
     [ -s "$ROOT/boot/initrd" ] || die "no /boot/initrd (nvidia-l4t-initrd)"
+    # NVIDIA's initrd carries Ubuntu programs; targets/jetson-orin/initrd.sources
+    # lists their packages for this initrd only, and the release publishes
+    # their sources. Another initrd needs the list made anew
+    # (tools/initrd-sources.py).
+    initrd_sha=$(sed -n 's/^INITRD_SHA256=//p' "$target_dir/initrd.sources")
+    [ "$(sha256sum <"$ROOT/boot/initrd" | cut -d' ' -f1)" = "$initrd_sha" ] ||
+      die "/boot/initrd is not the initrd targets/jetson-orin/initrd.sources lists the programs of (INITRD_SHA256): make the list anew with tools/initrd-sources.py"
     mkdir -p "$ROOT/boot/extlinux"
     SLOT=A ROOT_PARTUUID=$(uuid_for rootfs-a) render "$target_dir/boot/extlinux.conf" >"$ROOT/boot/extlinux/extlinux.conf"
     mapfile -t kvers < <(cd "$ROOT/usr/lib/modules" && ls)
@@ -225,6 +250,10 @@ else
   fi
   if [ "$BOOTLOADER" = grub-efi ]; then
     systemctl --root="$ROOT" enable ironflockos-slot-proven.path ironflockos-slot-keep.timer
+    # The boot script on the IRONFLOCKOS partition (ADR-0022): checked at
+    # every boot, renewed through the two units above once the slot is
+    # proven.
+    systemctl --root="$ROOT" enable ironflockos-boot-script.service
     # The screen (docs/build.md): the device's own splash picture and its
     # display setting, both for GRUB next to grubenv. The EFI targets only
     # (docs/kiosk-plan.md, P5).
@@ -256,6 +285,13 @@ fi
 systemctl --root="$ROOT" mask apt-daily.timer apt-daily-upgrade.timer fwupd-refresh.timer \
   systemd-firstboot.service rauc-mark-good.service sshd-keygen.service \
   systemd-networkd.service systemd-networkd.socket systemd-networkd-wait-online.service
+# Ubuntu's motd-news would fetch news from motd.ubuntu.com twice a day for the
+# login banner; build/branding.sh removes its script. Masked, as a slot's first
+# boot enables what no preset names.
+if [ -e "$ROOT/usr/lib/systemd/system/motd-news.timer" ]; then
+  systemctl --root="$ROOT" disable motd-news.timer 2>/dev/null || true
+  systemctl --root="$ROOT" mask motd-news.timer motd-news.service
+fi
 # sshd listens on the network only; systemd's SSH generator (vsock, AF_UNIX)
 # fails on machines without vsock.
 mkdir -p "$ROOT/etc/systemd/system-generators"

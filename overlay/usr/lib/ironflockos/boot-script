@@ -1,0 +1,459 @@
+#!/bin/sh
+# The boot script on the IRONFLOCKOS partition (ADR-0022, docs/build.md "Boot
+# and A/B"). An update writes a root slot only; this brings the booted slot's
+# boot script and loader (/usr/lib/ironflockos/boot/) to the partition, the
+# script with a trial boot (two at most), and changes a device installed with
+# 0.17.0 or before over to the loader.
+#
+#   boot-script boot    at every boot: a loader that is missing or damaged is
+#                       put back, a trial that failed is recorded, a
+#                       confirmed one is finished
+#   boot-script proven  the booted slot was marked good (ironflockos-slot-proven):
+#                       also the change-over, a newer loader, and the slot's
+#                       script staged for a trial at the next boot
+#   boot-script kept    a proven slot has stayed up two minutes after
+#                       multi-user.target (ironflockos-slot-keep): also
+#                       confirms the trial this boot ran
+#   boot-script cancel  RAUC's post-install handler: an OS update was
+#                       installed; a staged script goes, and nothing is
+#                       staged or changed over until the next boot
+#
+# EFI/BOOT on the partition: grub.cfg, the loader (EFI/debian/grub.cfg is the
+# same file, GRUB's second path); boot.cfg, the script in use; boot-next.cfg,
+# one on trial. grubenv: IRONFLOCKOS_SCRIPT_TRIAL (staged, tried, failed,
+# good), IRONFLOCKOS_SCRIPT_SLOT (the slot that staged it),
+# IRONFLOCKOS_SCRIPT_UNCONFIRMED (a version whose first trial boot was not
+# confirmed: it is staged once more) and IRONFLOCKOS_SCRIPT_FAILED (the
+# highest version whose second trial was not confirmed either: only a higher
+# one is staged). A trial boot that is not confirmed may have failed or been
+# cut short by a power cut or a restart; GRUB cannot tell, so a version has
+# two trial boots (the owner's decision, 2026-11-17). The counts are in
+# grubenv, next to the scripts: a factory reset, which clears /data, leaves
+# them. Each file goes into place whole: written under another name, synced,
+# renamed, and the folder synced.
+#
+# Nothing here stops a boot: every failure is a line in the journal, the
+# device runs on the scripts it has, and the exit code is 0 (2 for wrong
+# usage). What the device has is in /run/ironflockos/boot-script.
+set -u
+
+mode=${1:-}
+case "$mode" in
+  boot | proven | kept | cancel) ;;
+  *)
+    echo "usage: boot-script boot|proven|kept|cancel" >&2
+    exit 2
+    ;;
+esac
+
+# IRONFLOCKOS_ESP, IRONFLOCKOS_BOOT_FILES, IRONFLOCKOS_PROC_CMDLINE,
+# IRONFLOCKOS_SLOT_PROVEN, IRONFLOCKOS_RUN: for the unit tests only.
+esp=${IRONFLOCKOS_ESP:-/boot/efi}
+files=${IRONFLOCKOS_BOOT_FILES:-/usr/lib/ironflockos/boot}
+cmdline=${IRONFLOCKOS_PROC_CMDLINE:-/proc/cmdline}
+proven=${IRONFLOCKOS_SLOT_PROVEN:-/var/lib/ironflockos/slot-proven}
+run=${IRONFLOCKOS_RUN:-/run/ironflockos}
+dir=$esp/EFI/BOOT
+debian=$esp/EFI/debian
+grubenv=$dir/grubenv
+loader=$dir/grub.cfg
+second=$debian/grub.cfg
+inuse=$dir/boot.cfg
+next=$dir/boot-next.cfg
+result=""
+
+say() { echo "boot-script: $*" >&2; }
+did() {
+  say "$*"
+  result=$*
+}
+
+[ -d "$dir" ] && [ -f "$grubenv" ] || exit 0
+if [ ! -f "$files/loader.cfg" ] || [ ! -f "$files/boot.cfg" ]; then
+  say "this slot has no boot script ($files): nothing done"
+  exit 0
+fi
+mkdir -p "$run" 2>/dev/null
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$run/boot-script.lock"
+  if ! flock -w 60 9; then
+    say "another run held its lock for a minute: nothing done"
+    exit 0
+  fi
+fi
+
+# --- reading -----------------------------------------------------------------
+
+env=""
+read_env() { env=$(grub-editenv "$grubenv" list 2>/dev/null) || env=""; }
+get() { printf '%s\n' "$env" | sed -n "s/^$1=//p" | head -n 1; }
+# put KEY=VALUE...: one write of grubenv.
+put() {
+  if grub-editenv "$grubenv" set "$@"; then
+    read_env
+    return 0
+  fi
+  say "could not write grubenv ($*)"
+  return 1
+}
+
+# version FILE KIND: the version on FILE's first line, "# ironflockos-boot-KIND-version: N".
+version() { sed -n "1s/^# ironflockos-boot-$2-version: \([0-9][0-9]*\)\$/\1/p" "$1" 2>/dev/null; }
+# whole FILE KIND: FILE has KIND's first line and its last line.
+whole() {
+  [ -n "$(version "$1" "$2")" ] && [ "$(tail -n 1 "$1" 2>/dev/null)" = "# end of the IronFlockOS boot $2" ]
+}
+# kind FILE: loader (a whole one), missing, damaged (empty, or a loader's
+# first line without its last), other (a script of before ADR-0022, or
+# 0.17.0's EFI/debian/grub.cfg).
+kind() {
+  if [ ! -e "$1" ]; then
+    echo missing
+  elif whole "$1" loader; then
+    echo loader
+  elif [ ! -s "$1" ] || [ -n "$(version "$1" loader)" ]; then
+    echo damaged
+  else
+    echo other
+  fi
+}
+# installed: the version of boot.cfg; 1 for one without a version line (the
+# script of 0.17.0 or before, kept as it was), 0 when it is missing or damaged.
+installed() {
+  if [ ! -f "$inuse" ]; then
+    echo 0
+  elif [ -z "$(version "$inuse" script)" ]; then
+    echo 1
+  elif whole "$inuse" script; then
+    version "$inuse" script
+  else
+    echo 0
+  fi
+}
+
+# --- writing -----------------------------------------------------------------
+
+fsync() { sync -- "$@" 2>/dev/null || sync; }
+# place SRC DIR NAME: SRC's bytes become DIR/NAME through DIR/.NAME.part,
+# written, synced and renamed; then the folder is synced.
+place() {
+  part=$2/.$3.part
+  if cp "$1" "$part" && fsync "$part" && mv -f "$part" "$2/$3" && fsync "$2" && cmp -s "$1" "$2/$3"; then
+    return 0
+  fi
+  rm -f "$part"
+  say "could not put $1 in place as $2/$3"
+  return 1
+}
+# put_loader SRC: grub.cfg in EFI/BOOT becomes SRC (a whole loader). The
+# second path must hold a whole loader already: while the first is away,
+# GRUB reads the second. The old one goes aside by a rename, which frees
+# nothing, and the new one comes under a name that is free.
+put_loader() {
+  if [ -e "$loader" ] && ! mv -f "$loader" "$dir/.grub.cfg.old"; then
+    say "could not move $loader aside"
+    return 1
+  fi
+  fsync "$dir"
+  place "$1" "$dir" grub.cfg || return 1
+  rm -f "$dir/.grub.cfg.old"
+  fsync "$dir"
+}
+
+# --- this boot ---------------------------------------------------------------
+
+word() { tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n "s/^$1=//p" | head -n 1; }
+booted=$(word rauc\\.slot)
+# The script that booted this system names its version; 0.17.0's names
+# none (1), the loader's last resort 0.
+booted_script=$(word ironflockos\\.boot_script)
+case "$booted_script" in '' | *[!0-9]*) booted_script=1 ;; esac
+slot_script=$(version "$files/boot.cfg" script)
+slot_loader=$(version "$files/loader.cfg" loader)
+if ! whole "$files/boot.cfg" script || ! whole "$files/loader.cfg" loader; then
+  say "this slot's boot script or loader is not whole ($files): nothing done"
+  exit 0
+fi
+read_env
+
+# ready: the booted slot has proven itself, is GRUB's first choice and was
+# marked good in this boot, and no update was installed in this boot.
+ready() {
+  [ -n "$booted" ] && [ -e "$proven" ] && [ ! -e "$run/boot-script.hold" ] || return 1
+  order=$(get ORDER)
+  # shellcheck disable=SC2086 # ORDER's words
+  set -- ${order:-A B}
+  [ "$1" = "$booted" ] && [ "$(get "${booted}_OK")" = 1 ] && [ "$(get "${booted}_TRY")" = 0 ]
+}
+
+# --- the loader at both paths ------------------------------------------------
+
+# Puts back a grub.cfg that is missing or damaged (a power cut, or fsck
+# truncating one of two names a cut rename left), from the second path or,
+# when neither path holds a whole loader, from the slot; and makes the second
+# path a copy of the first. Any boot: nothing here waits for a proof.
+repair_loader() {
+  k1=$(kind "$loader")
+  k2=$(kind "$second")
+  case "$k1" in
+    loader)
+      v1=$(version "$loader" loader)
+      if [ "$k2" = loader ] && [ "$(version "$second" loader)" -gt "$v1" ]; then
+        # A renewal that was cut after the second path: finish it.
+        put_loader "$second" && did "loader $(version "$second" loader) put in place (a renewal that had been cut)"
+      elif ! cmp -s "$loader" "$second"; then
+        place "$loader" "$debian" grub.cfg && did "EFI/debian/grub.cfg is the loader again"
+      fi
+      ;;
+    missing | damaged)
+      if [ "$k2" = loader ]; then
+        put_loader "$second" && did "grub.cfg was $k1: the loader again, from EFI/debian/grub.cfg"
+      else
+        # Neither path boots: GRUB would stop at its prompt.
+        say "grub.cfg is $k1 and EFI/debian/grub.cfg is no loader: both from this slot"
+        [ -d "$debian" ] || mkdir -p "$debian"
+        place "$files/loader.cfg" "$debian" grub.cfg || return
+        if [ ! -f "$inuse" ]; then
+          place "$files/boot.cfg" "$dir" boot.cfg || return
+        fi
+        put_loader "$files/loader.cfg" && did "grub.cfg was $k1: the loader of this slot, at both paths"
+      fi
+      ;;
+  esac
+}
+
+# The change-over of a device installed with 0.17.0 or before: grub.cfg is
+# the whole boot script, EFI/debian/grub.cfg sources it. The one write
+# without a trial, so at every moment GRUB finds what boots: (1) the second
+# path becomes the loader, while GRUB still reads grub.cfg first; (2) grub.cfg
+# is renamed to boot.cfg, the bytes that boot this device, and GRUB reads
+# the loader at the second path, which runs it; (3) the loader comes to
+# grub.cfg.
+change_over() {
+  [ "$(kind "$loader")" = other ] || return 0
+  if ! grep -q 'rauc\.slot=' "$loader" || ! grep -q '^menuentry ' "$loader"; then
+    result="not changed over: grub.cfg is not an IronFlockOS boot script"
+    return 0
+  fi
+  case "$(kind "$second")" in
+    loader) ;;
+    other)
+      # shellcheck disable=SC2016 # GRUB's variable, a line of the file
+      if ! grep -qxF 'source ($root)/EFI/BOOT/grub.cfg' "$second"; then
+        result="not changed over: EFI/debian/grub.cfg is not the one IronFlockOS wrote"
+        return 0
+      fi
+      place "$files/loader.cfg" "$debian" grub.cfg || return
+      ;;
+    damaged)
+      # Emptied (fsck); GRUB reads grub.cfg while it is there.
+      place "$files/loader.cfg" "$debian" grub.cfg || return
+      ;;
+    *)
+      result="not changed over: no EFI/debian/grub.cfg (a device installed before ADR-0011)"
+      return 0
+      ;;
+  esac
+  if [ -e "$inuse" ] && ! mv -f "$inuse" "$dir/.boot.cfg.old"; then
+    say "could not move a boot.cfg of before aside"
+    return
+  fi
+  if ! mv "$loader" "$inuse"; then
+    say "could not rename grub.cfg to boot.cfg"
+    return
+  fi
+  fsync "$dir"
+  put_loader "$second" || return
+  rm -f "$dir/.boot.cfg.old"
+  fsync "$dir"
+  did "changed over: grub.cfg is the loader $(version "$loader" loader), boot.cfg the script that booted this device"
+}
+
+# A newer loader of this slot's (rare): the second path first, then grub.cfg.
+renew_loader() {
+  [ "$(kind "$loader")" = loader ] || return 0
+  [ "$slot_loader" -gt "$(version "$loader" loader)" ] || return 0
+  place "$files/loader.cfg" "$debian" grub.cfg || return
+  put_loader "$files/loader.cfg" && did "loader $slot_loader put in place"
+}
+
+# --- the trial ---------------------------------------------------------------
+
+next_version() { version "$next" script; }
+
+# end_trial [KEY=VALUE...]: the trial is over; boot-next.cfg goes after grubenv
+# says so (a boot-next.cfg without a trial is never run).
+# shellcheck disable=SC2120 # the arguments are optional
+end_trial() {
+  put IRONFLOCKOS_SCRIPT_TRIAL= IRONFLOCKOS_SCRIPT_SLOT= "$@" || return 1
+  rm -f "$next"
+  fsync "$dir"
+}
+
+# A confirmed trial: boot-next.cfg becomes boot.cfg, and a first trial that
+# was not confirmed no longer counts. While grubenv says good the loader runs
+# boot-next.cfg, so boot.cfg can be replaced in place.
+promote() {
+  nv=$(next_version)
+  if whole "$next" script; then
+    place "$next" "$dir" boot.cfg || return
+    end_trial IRONFLOCKOS_SCRIPT_UNCONFIRMED= && did "boot script $nv is in use"
+  else
+    end_trial && did "a confirmed boot script was no longer whole: boot.cfg stays"
+  fi
+}
+
+# failed WHY [KEY=VALUE...]: the trial boot was not confirmed. The first time
+# for a version it counts once and the version is staged again by the same
+# rules (not before the next run that may stage, so never for this boot);
+# the second time it has failed for good and only a higher one is staged.
+failed() {
+  why=$1
+  shift
+  nv=$(next_version)
+  if [ -n "$nv" ] && [ "$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)" != "$nv" ]; then
+    end_trial "IRONFLOCKOS_SCRIPT_UNCONFIRMED=$nv" "$@" &&
+      did "the trial of boot script $nv was not confirmed ($why): first trial not confirmed, one more; boot script $(installed) stays in use"
+    return
+  fi
+  high=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$high" in '' | *[!0-9]*) high=0 ;; esac
+  v=${nv:-0}
+  [ "$v" -ge "$high" ] || v=$high
+  end_trial "IRONFLOCKOS_SCRIPT_FAILED=$v" IRONFLOCKOS_SCRIPT_UNCONFIRMED= "$@" &&
+    did "the trial of boot script ${nv:-?} was not confirmed again ($why): failed for good; boot script $(installed) stays in use, ${nv:-?} is not tried again"
+}
+
+judge() {
+  trial=$(get IRONFLOCKOS_SCRIPT_TRIAL)
+  slot=$(get IRONFLOCKOS_SCRIPT_SLOT)
+  case "$trial" in
+    "")
+      if [ -e "$next" ]; then
+        rm -f "$next"
+        fsync "$dir"
+      fi
+      ;;
+    staged)
+      if [ "$slot" != "$booted" ] || ! whole "$next" script; then
+        end_trial && did "a boot script staged by slot ${slot:-?} went unused"
+      fi
+      ;;
+    tried)
+      if [ "$booted_script" = "$(next_version)" ] && [ "$booted" = "$slot" ]; then
+        # This boot is the trial's. The same proof as ironflockos-slot-keep's:
+        # proven, and up two minutes after multi-user.target, which it has
+        # just marked good.
+        if [ "$mode" = kept ] && [ "$(get "${booted}_OK")" = 1 ] && [ "$(get "${booted}_TRY")" = 0 ]; then
+          put IRONFLOCKOS_SCRIPT_TRIAL=good && promote
+        fi
+      elif [ "$booted" != "$slot" ] && { [ "$slot" = A ] || [ "$slot" = B ]; }; then
+        # The trial's script booted the other slot, or something else did:
+        # the trial's slot gets back its try, as the loader does.
+        failed "slot $booted booted with boot script $booted_script" "${slot}_TRY=0"
+      else
+        failed "this boot ran boot script $booted_script"
+      fi
+      ;;
+    failed) failed "its boot was not confirmed" ;;
+    good) promote ;;
+    *) end_trial && did "an unknown trial state ($trial) cleared" ;;
+  esac
+}
+
+# The slot's script for a trial at the next boot, when it is newer than the
+# one in use (or that one did not boot this system) and it or a newer one has
+# not failed for good. A version whose first trial was not confirmed comes
+# here again for its second.
+stage() {
+  [ -z "$(get IRONFLOCKOS_SCRIPT_TRIAL)" ] || return 0
+  [ "$(kind "$loader")" = loader ] || return 0
+  have=$(installed)
+  [ "$booted_script" != 0 ] || have=0
+  [ "$slot_script" -gt "$have" ] || return 0
+  high=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$high" in '' | *[!0-9]*) high=0 ;; esac
+  if [ "$slot_script" -le "$high" ]; then
+    result="boot script $slot_script is not staged: $high failed its trial"
+    return 0
+  fi
+  if command -v grub-script-check >/dev/null 2>&1 && ! grub-script-check "$files/boot.cfg" >/dev/null 2>&1; then
+    say "this slot's boot script $slot_script fails grub-script-check: not staged"
+    result="boot script $slot_script is not staged: grub-script-check refused it"
+    return 0
+  fi
+  place "$files/boot.cfg" "$dir" boot-next.cfg || return
+  if put IRONFLOCKOS_SCRIPT_TRIAL=staged "IRONFLOCKOS_SCRIPT_SLOT=$booted"; then
+    did "boot script $slot_script staged: the next boot tries it, trial $(($(tries "$slot_script") + 1)) of 2 (in use: $have)"
+  else
+    rm -f "$next"
+  fi
+}
+
+# --- the status for the agent ------------------------------------------------
+
+# tries VERSION: its trial boots that were not confirmed (0 or 1; 2 once failed for good).
+tries() {
+  high=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$high" in '' | *[!0-9]*) high=0 ;; esac
+  if [ "$1" -le "$high" ]; then
+    echo 2
+  elif [ "$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)" = "$1" ]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+status() {
+  # trials: the trial boots of the version on trial (else of the one whose
+  # trial was not confirmed, else of the one that failed for good, else of
+  # the slot's) that have begun or were not confirmed, of the two it has.
+  tv=$(next_version)
+  [ -n "$tv" ] || tv=$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)
+  [ -n "$tv" ] || tv=$(get IRONFLOCKOS_SCRIPT_FAILED)
+  case "$tv" in '' | *[!0-9]*) tv=$slot_script ;; esac
+  n=$(tries "$tv")
+  case "$(get IRONFLOCKOS_SCRIPT_TRIAL)" in tried | good | failed) [ "$n" -ge 2 ] || n=$((n + 1)) ;; esac
+  previous=$(sed -n 's/^result=//p' "$run/boot-script" 2>/dev/null)
+  {
+    echo "# ironflockos-boot-script (ADR-0022): the boot script on the IRONFLOCKOS partition"
+    echo "booted=$booted_script"
+    echo "installed=$(installed)"
+    echo "slot=$slot_script"
+    echo "loader=$(version "$loader" loader)"
+    echo "trial=$(get IRONFLOCKOS_SCRIPT_TRIAL)"
+    echo "trial-version=$(next_version)"
+    echo "trials=$n of 2"
+    echo "trials-of=$tv"
+    echo "unconfirmed=$(get IRONFLOCKOS_SCRIPT_UNCONFIRMED)"
+    echo "failed=$(get IRONFLOCKOS_SCRIPT_FAILED)"
+    echo "result=${result:-$previous}"
+  } >"$run/.boot-script.part" && mv -f "$run/.boot-script.part" "$run/boot-script"
+}
+
+if [ "$mode" = cancel ]; then
+  : >"$run/boot-script.hold"
+  case "$(get IRONFLOCKOS_SCRIPT_TRIAL)" in
+    good) promote ;;
+    failed) failed "its boot was not confirmed" ;;
+    staged | tried)
+      nv=$(next_version)
+      end_trial && did "an OS update was installed: the staged boot script ${nv:-?} goes"
+      ;;
+  esac
+  status
+  exit 0
+fi
+
+repair_loader
+judge
+if [ "$mode" != boot ] && ready; then
+  change_over
+  if [ -z "$(get IRONFLOCKOS_SCRIPT_TRIAL)" ]; then
+    renew_loader
+    stage
+  fi
+fi
+status
+exit 0

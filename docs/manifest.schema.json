@@ -119,7 +119,7 @@
         "kernel": { "enum": ["std", "rt"] },
         "architecture": { "enum": ["amd64", "arm64"] },
         "image": {
-          "description": "The raw disk image, <image-id>-<version>.img.gz, as FlockFlasher writes it.",
+          "description": "The raw disk image, <image-id>-<version>.img.gz, as FlockFlasher writes it. On jetson-orin, which has no disk image (NVIDIA's tools write the disk), the slot image <image-id>-<version>.rootfs.ext4.zst, which the flash kit takes, without raw_size and min_disk_size and without modules_alias; FlockFlasher's boards never name it, and readers that write disks skip an image that is no .img.gz.",
           "$ref": "#/$defs/diskImage"
         },
         "bundle": {

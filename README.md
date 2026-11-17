@@ -61,7 +61,7 @@ The status of each work package is in [docs/implementation-plan.md](docs/impleme
 | `amd64-efi` | x86-64 PCs and industrial PCs with UEFI | shim, GRUB, RAUC | `base`, `base-rt`, `nvidia`, `installer` |
 | `arm64-efi` | arm64 machines with UEFI (SystemReady boards, VMs) | shim, GRUB, RAUC | `base`, `base-rt`, `installer` |
 | `rpi-arm64` | Raspberry Pi 4, 400, 5, CM4, CM5 | Pi firmware tryboot, RAUC | `base` |
-| `jetson-orin` | NVIDIA Jetson Orin | NVIDIA UEFI and `nvbootctrl`, RAUC | none yet: the root tree, layout, A/B backend and the flash kit are done (not yet run on a module); no Jetson file is released before the licence sign-off |
+| `jetson-orin` | NVIDIA Jetson Orin | NVIDIA UEFI and `nvbootctrl`, RAUC | `base` as a slot image and bundle, with the flash kit and NVIDIA's Agreement, from the release the owner names (the next after 0.18.0); not yet proven on hardware: no module has started the image |
 
 - **`base`**: Debian 13 with systemd, NetworkManager, OpenSSH, Docker CE, RAUC, fwupd,
   the device-agent and `ironflock` (`/usr/bin/ironflock`).

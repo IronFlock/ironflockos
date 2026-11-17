@@ -4,7 +4,7 @@
 #
 # Runs in the build container (build/sign-in-builder.sh). DIR holds one
 # directory per image as a release build leaves it (out/<image-id>/): the
-# image, the bundle sealed with the build's throwaway key, and that key's CA
+# image (on Jetson slot A's filesystem image), the bundle sealed with the build's throwaway key, and that key's CA
 # (<name>.seal-ca.pem). Each bundle is checked against its sealing CA,
 # re-signed (rauc resign, payload unchanged), checked the way the device
 # checks it against the keyring that must accept it, and against the keyrings
@@ -131,7 +131,12 @@ for bundle in "$dir"/*/*.raucb; do
   fi
   cp "$signed" "$bundle"
   rm -f "$seal" "$signed" "$sealed"
-  (cd "$d" && sha256sum -- *.img.gz *.raucb >SHA256SUMS)
+  # The image is a disk image, or on Jetson slot A's filesystem image.
+  if [ -f "$d/$name.img.gz" ]; then
+    (cd "$d" && sha256sum -- *.img.gz *.raucb >SHA256SUMS)
+  else
+    (cd "$d" && sha256sum -- *.rootfs.ext4.zst *.raucb >SHA256SUMS)
+  fi
   n=$((n + 1))
   log "$name.raucb: signed by $signer ($mode)"
 done

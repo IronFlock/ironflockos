@@ -10,7 +10,8 @@
 # For each bundle, the keyring and the RAUC settings come from the disk image
 # next to it: /etc/rauc/keyring.pem and /etc/rauc/system.conf in slot A (the
 # partition rootfs-a of <name>.img.gz), which a device installed from that
-# image checks its updates with. sign-bundles.sh checks against
+# image checks its updates with. On Jetson, which has no disk image, slot A
+# is the slot image <name>.rootfs.ext4.zst, which the flash kit writes. sign-bundles.sh checks against
 # pki/ironflockos-root-ca.pem; this checks the image itself.
 #
 # rauc info gets the image's own settings for the check (rauc_conf): from
@@ -49,7 +50,7 @@ case "$mode" in
   *) die "usage: verify-bundles.sh release|dry-run DIR" ;;
 esac
 [ -d "$dir" ] || die "usage: verify-bundles.sh release|dry-run DIR ($dir is no directory)"
-require rauc openssl sfdisk debugfs jq gzip dd awk
+require rauc openssl sfdisk debugfs jq gzip dd awk zstd
 standin=""
 if [ "$mode" = dry-run ]; then
   standin=${IRONFLOCKOS_STANDIN_KEYRING:-}
@@ -94,6 +95,25 @@ image_rauc() {
   grep -q '^\[keyring\]' "$work/system.conf" || {
     cat "$work/debugfs.log" >&2
     die "$(basename "$img") carries no RAUC system.conf with a keyring in slot A (/etc/rauc/system.conf)"
+  }
+}
+
+# slot_rauc SLOT_ZST: the same of a Jetson slot image, slot A's filesystem.
+slot_rauc() {
+  local img=$1 slot=$work/slot.ext4 f
+  rm -f "$slot" "$work/keyring.pem" "$work/system.conf"
+  zstd -q -dc "$img" >"$slot" || die "$(basename "$img") does not unpack"
+  for f in keyring.pem system.conf; do
+    debugfs -R "cat /etc/rauc/$f" "$slot" >"$work/$f" 2>>"$work/debugfs.log" || true
+  done
+  rm -f "$slot"
+  if ! grep -q -- '-----BEGIN CERTIFICATE-----' "$work/keyring.pem" || ! openssl x509 -in "$work/keyring.pem" -noout 2>/dev/null; then
+    cat "$work/debugfs.log" >&2
+    die "$(basename "$img") carries no RAUC keyring (/etc/rauc/keyring.pem)"
+  fi
+  grep -q '^\[keyring\]' "$work/system.conf" || {
+    cat "$work/debugfs.log" >&2
+    die "$(basename "$img") carries no RAUC system.conf with a keyring (/etc/rauc/system.conf)"
   }
 }
 
@@ -152,35 +172,42 @@ for bundle in "$dir"/*/*.raucb; do
   d=$(dirname "$bundle")
   id=$(basename "$d")
   name=$(basename "$bundle" .raucb)
-  img=$d/$name.img.gz
-  [ -f "$img" ] || die "$name.raucb has no disk image next to it ($name.img.gz)"
-  image_rauc "$img"
+  if [ -f "$d/$name.img.gz" ]; then
+    img=$d/$name.img.gz
+    image_rauc "$img"
+  elif [ -f "$d/$name.rootfs.ext4.zst" ]; then
+    img=$d/$name.rootfs.ext4.zst
+    slot_rauc "$img"
+  else
+    die "$name.raucb has no disk image next to it ($name.img.gz), nor a slot image ($name.rootfs.ext4.zst)"
+  fi
+  imgname=$(basename "$img")
   keyring=$work/keyring.pem
   rauc_conf "$work/system.conf" "$keyring" >"$work/image.conf" ||
-    die "$name.img.gz: its /etc/rauc/system.conf has no compatible, or no single keyring path, or a keyring directory, or a keyring other than /etc/rauc/keyring.pem"
+    die "$imgname: its /etc/rauc/system.conf has no compatible, or no single keyring path, or a keyring directory, or a keyring other than /etc/rauc/keyring.pem"
   compatible=$(sed -n 's/^compatible=//p' "$work/image.conf")
-  [ "$compatible" = "$id" ] || die "$name.img.gz is compatible $compatible, not $id"
+  [ "$compatible" = "$id" ] || die "$imgname is compatible $compatible, not $id"
   ca=$(openssl x509 -in "$keyring" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')
   openssl verify -purpose any -CAfile "$keyring" "$signer" >/dev/null 2>&1 ||
-    die "the keyring of $name.img.gz ($ca) does not accept the bundle signer $(basename "$signer")"
+    die "the keyring of $imgname ($ca) does not accept the bundle signer $(basename "$signer")"
   # RAUC checks a bundle's payload only where nothing else can change the
   # file meanwhile: a copy of root's own, not the bind-mounted original.
   cp "$bundle" "$work/bundle.raucb"
   if [ "$mode" = release ]; then
-    accepted "$work/image.conf" "the keyring of $name.img.gz ($ca)"
-    log "$name.raucb verifies against the keyring of $name.img.gz ($ca)"
+    accepted "$work/image.conf" "the keyring of $imgname ($ca)"
+    log "$name.raucb verifies against the keyring of $imgname ($ca)"
   else
     # The positive control (see the top), then the refusal.
     rauc_conf "$work/system.conf" "$standin" >"$work/standin.conf"
     accepted "$work/standin.conf" "the dry run's stand-in CA, in the positive control: the check cannot work here"
     if check "$work/image.conf" "$work/bundle.raucb"; then
-      die "$name.raucb, signed by the dry-run stand-in, verifies against the keyring of $name.img.gz ($ca)"
+      die "$name.raucb, signed by the dry-run stand-in, verifies against the keyring of $imgname ($ca)"
     fi
     grep -q 'signature verification failed' "$work/info" || {
       cat "$work/info" >&2
-      die "$name.raucb is refused with the keyring of $name.img.gz, but not by rauc's signature check (above)"
+      die "$name.raucb is refused with the keyring of $imgname, but not by rauc's signature check (above)"
     }
-    log "$name.raucb (dry-run stand-in) verifies with the stand-in's CA and is refused by the signature check against the keyring of $name.img.gz ($ca), which accepts the bundle signer"
+    log "$name.raucb (dry-run stand-in) verifies with the stand-in's CA and is refused by the signature check against the keyring of $imgname ($ca), which accepts the bundle signer"
   fi
   rm -f "$work/bundle.raucb" "$keyring" "$work/system.conf" "$work/image.conf" "$work/standin.conf"
   n=$((n + 1))

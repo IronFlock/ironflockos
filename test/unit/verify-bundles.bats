@@ -416,3 +416,42 @@ bundle() {
   [[ "$sign" == *'build/sign-in-builder.sh "$MODE" out'* ]]
   [[ "$(awk '$0 == "  stage:" { f = 1; next } f && /^    needs:/ { print; exit }' "$wf")" == *sign* ]]
 }
+
+# jetson_slot [KEYRING]: a Jetson image: slot A's filesystem as the slot
+# image <name>.rootfs.ext4.zst, with KEYRING and Jetson's system.conf, and no
+# disk image; its bundle signed by the bundle signer.
+jetson_slot() {
+  jid=ironflockos-jetson-orin-base
+  jname=$jid-1.0.0
+  mkdir -p "$tmp/out/$jid"
+  sed "s/@COMPATIBLE@/$jid/" "$repo/targets/jetson-orin/system.conf" >"$tmp/jetson-system.conf"
+  fs "${1:-$root_ca}" "$tmp/jetson-system.conf" | zstd -q -c >"$tmp/out/$jid/$jname.rootfs.ext4.zst"
+  { echo "FAKE RAUCB" && echo "compatible=$jid" && cat "$signer"; } >"$tmp/out/$jid/$jname.raucb"
+}
+
+@test "Jetson: the bundle verifies against the keyring in its slot image, which has no disk image" {
+  jetson_slot
+  run bash "$verify" release "$tmp/out"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$jname.raucb verifies against the keyring of $jname.rootfs.ext4.zst (CN=IronFlockOS root CA,O=IronFlock)"* ]]
+  [ -z "$(ls -A "$tmp/work")" ]
+  # a slot image that trusts another CA, or carries no keyring, fails
+  jetson_slot "$tmp/other/keyring.pem"
+  run bash "$verify" release "$tmp/out"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the keyring of $jname.rootfs.ext4.zst (CN=other CA (throwaway),O=IronFlock) does not accept the bundle signer"* ]]
+  jetson_slot -
+  run bash "$verify" release "$tmp/out"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$jname.rootfs.ext4.zst carries no RAUC keyring"* ]]
+  rm "$tmp/out/$jid/$jname.rootfs.ext4.zst"
+  run bash "$verify" release "$tmp/out"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"has no disk image next to it"*"nor a slot image ($jname.rootfs.ext4.zst)"* ]]
+}
+
+@test "sign-bundles.sh: a Jetson image's SHA256SUMS names its slot image and bundle" {
+  grep -q '(cd "$d" && sha256sum -- \*.rootfs.ext4.zst \*.raucb >SHA256SUMS)' "$repo/build/sign-bundles.sh"
+  grep -q '(cd "$d" && sha256sum -- \*.img.gz \*.raucb >SHA256SUMS)' "$repo/build/sign-bundles.sh"
+}

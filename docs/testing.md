@@ -27,7 +27,9 @@ with a reason and an expiry date.
 
 `test/unit/*.bats` cover the build library (`build/lib.sh`: configuration
 parsing that never runs code, templates without holes, sizes, the matrix axes),
-the os-release contract, the target templates (GRUB A/B contract, RAUC
+the os-release contract, the distribution's names (`branding.bats`:
+`build/branding.sh` against trees shaped as Ubuntu's and Debian's `base-files` leave
+them, and the overlay's `/etc/issue`), the target templates (GRUB A/B contract, RAUC
 `system.conf`, slot sizes), `build/bake.sh` against a fake download base (the
 pinned `ironflock`, its signature, what `ironflock bake` must leave), and the
 image's own scripts in `overlay/usr/lib/ironflockos` run against a temporary
@@ -48,7 +50,17 @@ stand for the IRONFLOCKOS partition, `/data` and the trust store, with a fake
 backends of the Raspberry Pi (`rpi-tryboot.bats`) and of Jetson
 (`tegra-rootfs-ab.bats`, with its health gate; `tegra-capsule.bats`, its boot
 firmware lane) run against fakes of the firmware's interfaces ("Raspberry Pi image checks", "Jetson root tree
-checks"). They need bash, bats and openssl only:
+checks"). The boot script's service (`boot-script.bats`) runs against folders that
+stand for the IRONFLOCKOS partition and the slot's `/usr/lib/ironflockos/boot`, with
+fakes for `grub-editenv`, `grub-script-check` and `sync`: the change-over from
+0.17.0's partition and the order of its renames, each state a cut leaves, staging and
+its refusals, the trial's confirmation and failure, the retry (a first unconfirmed trial stages the
+version again, the second fails it for good, a higher version or a confirmation
+resets the count, a cancel does not count), an update that cancels it. The
+loader and the script are checked as files: their versions and last lines, only
+modules built into Debian's signed GRUB, what the loader writes to `grubenv` and its
+choices; where `grub-script-check` is installed (CI's unit job installs `grub-common`),
+both and 0.17.0's script pass it. GRUB's behaviour itself is the QEMU test's. They need bash, bats and openssl only:
 
 ```sh
 just test
@@ -224,7 +236,7 @@ Sequence:
    passwords for that user and root, the user logs in on tty2 with it (the
    user's shell on tty2 after PAM's session in the journal), and without the
    file the password is locked again. The boot
-   menu and its "Firmware setup" are checked in the rendered `grub.cfg`
+   menu and its "Firmware setup" are checked in the rendered `boot.cfg`
    (`test/unit/screen.bats`), not in QEMU. *GRUB's colour* (WP-8.7): after
    the own splash step `splash.env` names its colour, and the next boot
    shows the whole screen in that colour before the kernel starts (by the
@@ -373,6 +385,41 @@ Sequence:
    except on an `-rt` image, which has no EFI runtime services to record it in.
    A second crash right after that boot, before the slot has stayed up for two
    minutes, counts as a failed try: the device comes up on slot A.
+8. **Boot script** ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md)),
+   between step 2 and step 3. The first boot already checks that the loader at
+   both of GRUB's paths and `boot.cfg` are the slot's own files and that this
+   script booted (`ironflockos.boot_script=` on the command line). Then the
+   IRONFLOCKOS partition becomes that of a device installed with 0.17.0: its
+   whole `grub.cfg` (`test/qemu/fixtures/grub-0.17.0.cfg`, the release's own,
+   rendered as the build renders it) and the `EFI/debian/grub.cfg` that sourced
+   it. This build's slot boots with it; started by hand (rather than waited
+   for), `ironflockos-slot-keep` changes the partition over (0.17.0's file byte
+   for byte as `boot.cfg`, the loader at both paths) and stages the slot's
+   script; the next boot is its trial, and `ironflockos-slot-keep` confirms it.
+   Under KVM only, as each costs a boot: three scripts fail their trial, each
+   ending on slot A with the script in use and the unconfirmed trial counted
+   (`trials=1 of 2`): one with a syntax error (`grub-script-check` refuses to
+   stage it, so the test stages it by hand, and refuses its retry; GRUB falls
+   back to `boot.cfg` in the same boot); one whose entry loads no kernel (the
+   same), which is staged again, fails its second trial too, and is then
+   failed for good and not staged a third time; and one whose kernel does not
+   find its root (the initramfs restarts after 40 seconds; the next boot finds
+   the trial unconfirmed), which is staged again and its retry not run. A
+   second trial whose kernel restarts by itself is in the unit tests only
+   (`boot-script.bats`). And what a power cut leaves boots: a
+   confirmed script not yet in place with `grub.cfg` gone (GRUB reads the
+   loader at `EFI/debian/grub.cfg`, which runs it; the system puts `grub.cfg`
+   back and finishes), and the change-over cut after its first step (0.17.0's
+   `grub.cfg` and the loader at the second path: GRUB reads `grub.cfg`). In step
+   3 a script staged before the install is cancelled by it. That is two boots
+   more on arm64 and nine more under KVM (one of them a restart by itself).
+9. **The released 0.17.0 slot** (amd64-efi base under KVM, last): the published
+   image of 0.17.0 is downloaded on the host, checked against its checksum,
+   and its slot written into slot B, which then boots through the loader and
+   this build's `boot.cfg`: a release's script boots the slots of the releases
+   before it. A `boot-next.cfg` without a trial lies next to it, as a power cut
+   between the file and `grubenv` leaves it, and is not run. The other rule, a
+   release's slot boots with the scripts before it, is step 8's first boot.
 
 **Install test** (`--variant installer`, the `install-test-<target>` jobs, for amd64-efi
 under KVM and arm64-efi emulated): the installer image is attached as a USB stick with `installer.conf` set to
@@ -456,7 +503,7 @@ Until then the update into slot B is RAUC's own, as before.
 **When an update, a rollback or a reset fails.** A device must still boot
 and come online (the lifeline rule). The test checks what it can see of that:
 every refused `ironflock os` command leaves grubenv and RAUC's slots as they
-were, and GRUB's next slot (by `grub.cfg`'s rule) is the one that runs, or the
+were, and GRUB's next slot (by `boot.cfg`'s rule) is the one that runs, or the
 installed update that waits; a refused update has downloaded and kept
 nothing; a refused reset has requested nothing and removed no `.flock`;
 after each rollback the device is up and answers the test host. A reset
@@ -501,8 +548,17 @@ the pins, kernel, initrd and `nvgpu`, the RAUC slots, the RAUC backend over
 `nv-l4t-bootloader-config`, which verifies every boot, among them), the baked
 agent and Docker's `nvidia` runtime, and the boot firmware lane: NVIDIA's
 capsules in `/opt/ota_package/t23x` unchanged against the package's
-checksums, the FreeRTOS statement, NVIDIA's licence texts, `tegra-capsule`,
-its report unit and the maintenance window's link. It also runs the tree's
+checksums, the FreeRTOS statement with the source mirror's URL and the
+contact of `release/contact`, NVIDIA's licence texts and the Agreement in
+`nvidia-l4t-core`'s documentation byte for byte as `bsp.conf` pins it, `tegra-capsule`,
+its report unit and the maintenance window's link. It checks that every installed
+`nvidia-l4t-*` package has its `copyright` file (following a doc directory that links
+to another package's), and the names at login: os-release without `UBUNTU_*` fields
+or Ubuntu URLs, the overlay's `/etc/issue` and `/etc/issue.net`, `lsb-release` with
+`DISTRIB_ID=IronFlockOS` and Ubuntu's release and codename, no `/etc/legal`, no Ubuntu
+logo, no `update-motd.d` script that names Ubuntu or Canonical, nothing that fetches
+`motd.ubuntu.com`, `motd-news.timer` masked, no `ubuntu-pro-client` and
+`/etc/dpkg/origins/ubuntu` kept. It also runs the tree's
 binaries in a chroot, the backend, `tegra-capsule` and `tegra-board-conf`
 among them
 (`docs/targets/jetson-orin.md`). Given the bundle as a second argument, as CI
@@ -566,9 +622,50 @@ capsules carry only NVIDIA's board spec strings and an FMP header; nothing of
 NVIDIA's is in the repository. The A/B switch, the forced fallback and a
 capsule update on a module are the hardware checklist (WP-6.6).
 
-Both jobs run on every pull request when the repository variable `JETSON_CI`
-is `true` (switched off by #201, on again with WP-6.3), and `ci-ok` needs
-them: without the variable no pull request gets `ci-ok`.
+The release path of a Jetson image is proven on every pull request without
+the switch `JETSON_RELEASE` and without publishing anything (WP-6.8,
+`docs/release.md`, "Jetson"). `jetson-rootfs` puts NVIDIA's Agreement and the
+flash kit next to the image, as a release build does
+(`build/jetson-release.sh files`), and the `jetson-release` job runs
+`test/image/jetson-release-check.sh` on that artifact on an x86_64 runner:
+`build/publish.sh stage` with `DRY_RUN=1` must refuse the release without
+notes, and with notes that link the Agreement and say the image is not yet
+proven on hardware must list exactly the slot image, the bundle, the flash
+kit, `NVIDIA-LICENSE.txt`, the os-release, the package list, the SBOM (a
+stand-in: a development build makes none) and `SHA256SUMS`; the Agreement
+must be the pin; `tools/catalog` must build a catalog, signed with a
+throwaway key and verified, that names the slot image and the bundle with
+their hashes, and no board, kit or Agreement; `build/sources.sh plan` must
+place every source package of the image (Ubuntu's with apt in the build
+container), mirror `public_sources.tbz2` and the `libnvidia-container`
+source to `ironflockos/sources/l4t-<L4T version>/`, and report an `open`
+decision instead of refusing it; `build/publish.sh sources` must accept the
+plan with `DRY_RUN=1`; and the FreeRTOS statement in the slot image must
+offer the source at that mirror and name the contact, and the slot image
+must carry the Agreement byte for byte (`debugfs`). The job takes a few
+minutes and runs beside `jetson-flash`, which takes longer.
+The build fails when NVIDIA's `/boot/initrd` is not the one
+`targets/jetson-orin/initrd.sources` was made from (its SHA-256), and so
+does the root tree check; `tools/initrd-sources.py` makes the list anew
+from NVIDIA's package (it reads public URLs and downloads every candidate
+Ubuntu package, so it runs by hand, not in CI).
+`test/unit/jetson-release.bats` covers it without a build: the switch off
+(today's build matrix, image list, attestation subjects, published files
+and source lists, each compared with what they were), the switch on (the
+Jetson files, `SHA256SUMS`, the source list apart), the release notes rule,
+the Agreement's pin at `stage`, every NVIDIA source package's decision
+(`release/sources`), Ubuntu's archive and Launchpad with stand-ins for
+`docker` and `curl`, the initrd's list (its form, its version, the plan
+taking its source packages, a list of another initrd refused), the
+decisions of today's images with `libnvidia-container`'s tag source, the
+pool paths, the contact and an emptied copy of it,
+and `build/jetson-release.sh check` and `files`. `tegra-capsule.bats` checks
+the statement's mirror and contact at build time, and `verify-bundles.bats`
+the check of a Jetson bundle against the keyring in its slot image.
+
+The three jobs run on every pull request when the repository variable
+`JETSON_CI` is `true` (switched off by #201, on again with WP-6.3), and
+`ci-ok` needs them: without the variable no pull request gets `ci-ok`.
 
 ## Hardware checklist
 

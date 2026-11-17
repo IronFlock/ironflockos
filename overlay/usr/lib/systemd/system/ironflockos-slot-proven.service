@@ -4,3 +4,6 @@ Description=IronFlockOS: remember that the booted slot has proven itself
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/ironflockos/slot-proven
+# A proven slot brings its boot script to the IRONFLOCKOS partition, for a
+# trial at the next boot (ADR-0022). Never a failed unit.
+ExecStart=-/usr/lib/ironflockos/boot-script proven

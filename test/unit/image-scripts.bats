@@ -173,14 +173,14 @@ slot_proven() {
   for key in kernel.panic_on_oops kernel.softlockup_panic kernel.hardlockup_panic; do
     grep -qx "$key = 1" "$conf"
   done
-  for boot in targets/amd64-efi/grub/grub.cfg targets/rpi-arm64/boot/cmdline.txt targets/jetson-orin/boot/extlinux.conf; do
+  for boot in targets/amd64-efi/grub/boot.cfg targets/amd64-efi/grub/loader.cfg targets/rpi-arm64/boot/cmdline.txt targets/jetson-orin/boot/extlinux.conf; do
     grep -qE '(^|[[:space:]])panic=10([[:space:]]|$)' "$repo/$boot"
   done
 }
 
 @test "the boot repairs a filesystem that a preen gives up on, on every target" {
   repo="$BATS_TEST_DIRNAME/../.."
-  for boot in targets/amd64-efi/grub/grub.cfg targets/rpi-arm64/boot/cmdline.txt targets/jetson-orin/boot/extlinux.conf; do
+  for boot in targets/amd64-efi/grub/boot.cfg targets/amd64-efi/grub/loader.cfg targets/rpi-arm64/boot/cmdline.txt targets/jetson-orin/boot/extlinux.conf; do
     grep -qE '(^|[[:space:]])fsck\.repair=yes([[:space:]]|$)' "$repo/$boot"
     # Not forced at every boot: a check of all of /data takes its time.
     ! grep -q 'fsck\.mode=force' "$repo/$boot"

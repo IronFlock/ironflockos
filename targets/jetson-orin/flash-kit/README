@@ -5,6 +5,10 @@ This kit writes IronFlockOS onto the NVMe drive of an NVIDIA Jetson Orin
 module (Orin Nano, Orin NX, AGX Orin), and the module's QSPI firmware, from a
 Linux PC with the module attached over USB in recovery mode.
 
+Not yet proven on hardware: no module has been flashed with this kit or has
+started IronFlockOS yet. The kit and the image are tested in CI up to the
+flash itself.
+
 The kit holds IronFlockOS's own scripts only (Apache License 2.0, LICENSE).
 It does not contain any of NVIDIA's software. While it runs, it downloads
 NVIDIA Jetson Linux (the BSP) from NVIDIA and runs NVIDIA's flash tools from

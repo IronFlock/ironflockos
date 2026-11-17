@@ -8,7 +8,8 @@
 | [build.md](build.md) | How an image is built: stages, artefacts, disk layout on a device, boot and A/B, the device settings, the factory reset and its contract for the CLI, local builds |
 | [testing.md](testing.md) | Unit tests, the QEMU image test, the hardware checklist |
 | [signing.md](signing.md) | The RAUC PKI in Cloud KMS: creating it, how releases sign, renewal |
-| [jetson-licence-review.md](jetson-licence-review.md) | What the Jetson images redistribute from NVIDIA, under which terms, what IronFlockOS does to meet them, and the questions for IronFlock's legal check |
+| [jetson-licence-review.md](jetson-licence-review.md) | What the Jetson images redistribute from NVIDIA, under which terms, what IronFlockOS does to meet them, and IronFlock's answers to the questions of its legal check (signed off 2026-11-17) |
+| [jetson-licence-research.md](jetson-licence-research.md) | Evidence for those questions, collected on 2026-11-17: the licence and policy texts, NVIDIA's and Canonical's public statements, what other Jetson distributors visibly do, EU, German and US export rules; drafts of the questions to NVIDIA and Canonical. Not legal advice |
 | [release.md](release.md) | How a release runs: build, sign, test, stage, promote, the signed catalog, the tag; the one-time setup |
 | [manifest.schema.json](manifest.schema.json) | The release catalog `dl/ironflockos/manifest.json` the device-agent and FlockFlasher read (ADR-0009), with an [example](manifest.example.json) |
 | [targets/amd64-efi.md](targets/amd64-efi.md), [arm64-efi.md](targets/arm64-efi.md), [rpi-arm64.md](targets/rpi-arm64.md), [jetson-orin.md](targets/jetson-orin.md) | Target notes and tested hardware |
@@ -26,7 +27,7 @@
 | [0005](adr/0005-builder-mmdebstrap-genimage.md) | mmdebstrap + genimage behind a just/shell framework | proposed |
 | [0006](adr/0006-rauc-pki-in-cloud-kms.md) | RAUC signing with a CA in Cloud KMS via PKCS#11 | accepted |
 | [0007](adr/0007-update-mechanism-rauc-and-firmware-lanes.md) | RAUC stays the OS updater; firmware in three lanes (bundle, RAUC hooks, fwupd); alternatives compared | accepted |
-| [0008](adr/0008-jetson-orin-bsp-jetpack-7.md) | Jetson Orin on Jetson Linux r39.2.1 (JetPack 7.2.1), Ubuntu 24.04; rootfs from NVIDIA's apt repositories, BSP tarball for flashing and capsules | accepted (licence review done 2026-11-07; legal sign-off before the first Jetson release) |
+| [0008](adr/0008-jetson-orin-bsp-jetpack-7.md) | Jetson Orin on Jetson Linux r39.2.1 (JetPack 7.2.1), Ubuntu 24.04; rootfs from NVIDIA's apt repositories, BSP tarball for flashing and capsules | accepted (licence review done 2026-11-07; signed off by IronFlock 2026-11-17) |
 | [0009](adr/0009-phase-2-decisions-hostname-channels-firmware.md) | Phase 2: hostname from the `.flock`, release channels production and test, boot firmware with OS releases and fwupd read-only first, the catalog schema | accepted |
 | [0010](adr/0010-ironflockos-images-for-virtual-devices.md) | Compute Engine images of every release for the virtual-device-manager; the `.flock` of a VM through its instance metadata | accepted |
 | [0011](adr/0011-secure-boot-with-debians-signed-boot-chain.md) | The EFI targets boot Debian's signed chain (Microsoft-signed shim, Debian's GRUB and kernel), so PCs boot IronFlockOS with Secure Boot on; convenience, not tamper resistance | accepted |
@@ -40,5 +41,6 @@
 | [0019](adr/0019-every-test-runs-before-the-merge.md) | Every test runs before the merge: a release that reuses its pull request's images skips `e2e`, and `sign` checks each bundle against the keyring in its own image; a release that builds its images tests them before it publishes; the update of a release image with a release bundle stays untested before the merge | accepted |
 | [0020](adr/0020-a-machine-panel-pc-on-the-stock-image.md) | A machine's panel PC takes the stock `base-rt` image and its functions move into apps: a splash from the image and the UI from a kiosk app, updates through the appliance, host settings and the firewall through the device-agent; for every image, `fsck.repair=yes` at boot and AppArmor on the Debian images | accepted |
 | [0021](adr/0021-trusted-cas-come-with-the-boot-medium.md) | Trusted CAs are a device setting on `/data`, taken from `ca.crt` on the IRONFLOCKOS partition and put into the system's trust store at every boot, before containerd, Docker and the agent, so a device reaches an appliance with a corporate certificate | accepted |
+| [0022](adr/0022-the-os-update-renews-the-boot-script.md) | An OS update renews the boot script on the IRONFLOCKOS partition: `grub.cfg` becomes a small loader (also at GRUB's second path, `EFI/debian/grub.cfg`), and the proven slot brings its script `boot.cfg` with a trial boot that falls back by itself and one retry; a device installed with 0.17.0 changes over once, in an order GRUB boots at every instant | accepted |
 
 Planned: `migration.md`, how devices of the previous OS move to IronFlockOS (a reflash).

@@ -1,8 +1,8 @@
 # ADR-0008: Jetson Orin on Jetson Linux r39.2.1 (JetPack 7.2.1), Ubuntu 24.04
 
 Status: accepted, 2026-11-05 (WP-6.1), on one condition: the licence review below passes
-before IronFlockOS publishes a Jetson image. The review was done on 2026-11-07; the legal
-sign-off is open (WP-6.8).
+before IronFlockOS publishes a Jetson image. The review was done on 2026-11-07, and
+IronFlock signed it off on 2026-11-17 (WP-6.8): the condition is met.
 
 ## Context
 
@@ -70,10 +70,13 @@ index and `release_sha_hashes.txt`, the apt repository index, and OE4T's
 ## Condition and open points
 
 - Condition: a licence review of what the image redistributes, and a legal check of it,
-  before IronFlockOS publishes a Jetson image (the release of WP-6.6). Building and testing
-  in CI do not wait for it. The review is done
-  ([jetson-licence-review.md](../jetson-licence-review.md), 2026-11-07). The legal
-  check is WP-6.8. What the review found:
+  before IronFlockOS publishes a Jetson image. Building and testing in CI do not wait for
+  it. The review is done
+  ([jetson-licence-review.md](../jetson-licence-review.md), 2026-11-07), and IronFlock's
+  legal check signed it off on 2026-11-17 (WP-6.8), with the answers recorded in the
+  review. The release pipeline publishes Jetson files while the repository variable
+  `JETSON_RELEASE` is `true` ([release.md](../release.md), "Jetson"). What the review
+  found:
   - The BSP and every `nvidia-l4t-*` package of r39.2.1 are under one agreement, the
     **NVIDIA Driver License Agreement**. It is not an open source licence. Its section
     1.1(d) permits distribution for use with an open source kernel, on two conditions:
@@ -91,9 +94,10 @@ index and `release_sha_hashes.txt`, the apt repository index, and OE4T's
     binaries. This changes decision 3: the BSP still provides the flash tools in CI and
     in the flash kit. Capsule generation is needed only for carrier boards that
     NVIDIA ships no capsule for.
-  - Open for legal: the review's eight questions (the points above, the indemnity, the
+  - The review's eight questions (the points above, the indemnity, the
     critical-applications exclusion, export control, Canonical's IP policy for the
-    Ubuntu userspace, and the revocable licence).
+    Ubuntu userspace, and the revocable licence): answered by IronFlock on 2026-11-17.
+    No SD image, no flash package and no generated capsule are published.
 - First modules and carrier boards: the master plan's Orin Nano developer kit (SD image)
   and Orin NX (flash package), unless the hardware available for the acceptance tests
   says otherwise (master plan, open question 3).
