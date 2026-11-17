@@ -895,12 +895,16 @@ class VM:
             raise TestFailure(f"`{command}` exited {rc}:\n{out}")
         return out
 
-    def reboot(self, timeout, quiet=False):
+    def reboot(self, timeout, quiet=False, kernels=1):
         """Restart and wait for the new system's shell. quiet: the kernel
         writes no "Linux version" to the console (the splash), so the shell
-        is asked from the start; GRUB's hidden menu takes no key but Esc."""
+        is asked from the start; GRUB's hidden menu takes no key but Esc.
+        kernels: the shell is the kernels-th kernel's after the restart, as
+        when the first one restarts by itself; nothing is typed before that
+        kernel starts, since the firmware's console reaches GRUB's menu,
+        where a key stops the countdown (wait_shell)."""
         old = self.run("cat /proc/sys/kernel/random/boot_id").strip()
-        starts = -1 if quiet else self.kernel_starts()
+        starts = -1 if quiet else self.kernel_starts() + kernels - 1
         self._send("systemctl reboot\r")
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -3302,7 +3306,7 @@ class Runner:
         test's again() puts the script back in CI_BOOT and the tool runs as
         at the slot's proof; after the second, it does not stage it."""
         starts = self.vm.kernel_starts()
-        self.vm.reboot(self.boot_timeout * kernels)
+        self.vm.reboot(self.boot_timeout * kernels, kernels=kernels)
         self.wait_running()
         if self.vm.kernel_starts() - starts < kernels:
             raise TestFailure(f"{kernels} kernels should have started for boot script {broken}")
