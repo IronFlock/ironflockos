@@ -96,7 +96,13 @@ be redistributed only if Canonical approves, certifies or provides it. Otherwise
 Ubuntu trademarks must be removed and replaced, and the binaries recompiled. The policy
 also says that Ubuntu is an aggregate work, and that it does not reduce the rights the
 licences of its packages grant. IronFlockOS's `jetson-orin` image carries IronFlockOS's name and
-uses Canonical's binaries from `ports.ubuntu.com`.
+uses Canonical's binaries from `ports.ubuntu.com`. Its `os-release` is IronFlockOS's own
+(`ID_LIKE="ubuntu debian"`). It still takes these files from Ubuntu's packages, with
+Ubuntu's name in them: `/etc/lsb-release`, `/etc/issue`, `/etc/issue.net`, `/etc/legal`
+and the scripts in `/etc/update-motd.d`. Systems built from Ubuntu's binaries replace
+them with their own and keep the technical references (the codename, the `ubuntu`
+version strings, the package names); the image does the same before the first Jetson
+release (WP-6.8; [research](jetson-licence-research.md), question 7).
 
 ## What IronFlockOS does
 
@@ -176,7 +182,7 @@ written permission.
 | 4 | Does IronFlock accept the indemnity (2.11)? Do its customer terms pass the exclusion of Critical Applications (2.10) on for Jetson devices? What changes with the EU's product liability directive 2024/2853, which counts software as a product from 9 December 2026 and allows no exclusion of liability towards injured persons? | Customer terms change before the first Jetson release |
 | 5 | How are the Jetson images classified for export control (15)? NVIDIA's proprietary parts are not publicly available open source, which matters under the US rules that follow US-origin software; the EU's definition of "in the public domain" disregards copyright restrictions. NVIDIA publishes no classification for its Jetson software. Does the download server need restrictions for embargoed destinations? | Jetson files go behind the restriction the answer names |
 | 6 | Is the source mirror (point 3) enough for NVIDIA's GPL and LGPL parts? The same question applies to the Ubuntu and Debian packages of every IronFlockOS image. For FreeRTOS (point 6): the image's statement (`/usr/share/doc/ironflockos/FreeRTOS-source-offer.txt`) offers the source at the mirror and says IronFlock sends it on request, without naming a contact. Does the offer need a postal or e-mail address, and whose? | As legal sets; the statement names the contact legal gives |
-| 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? | A licence from Canonical, or a userspace IronFlockOS builds itself |
+| 7 | Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries fine under Canonical's IP policy? Canonical's written position keeps a licence or a rebuild for a commercial, own-named image of classic Ubuntu packages (its founder set such device images apart from Ubuntu Core in 2016), and it has never said which marks must go. Many systems, commercial ones included, ship the unchanged binaries under their own names with the visible branding replaced, without a published agreement, and no enforcement against them is known: tolerance, not permission. Does IronFlock rely on that, or ask Canonical? | A licence from Canonical (it sells one for devices), or a userspace IronFlockOS builds itself |
 | 8 | The licence is revocable, and every Jetson device in the field depends on it. Does IronFlock accept that, or does it seek a written distribution agreement with NVIDIA, for example through NVIDIA's partner programme? | |
 
 ## Sources

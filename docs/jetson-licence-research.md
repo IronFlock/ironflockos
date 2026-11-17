@@ -30,7 +30,7 @@ How to read it:
 | 4 | Indemnity (2.11) and Critical Applications (2.10) | Text is clear; this is a business decision. New: the EU Product Liability Directive applies from 9 Dec 2026 and forbids excluding liability towards injured persons | High (text) | Lawyer drafts the Jetson clauses of the customer terms |
 | 5 | Export classification; restrict the download server? | Open. EU: probably not listed. US: NVIDIA's binaries are US-origin and NVIDIA publishes no ECCN for any Jetson software | Low-medium | Ask NVIDIA for the ECCN of Jetson Linux r39.2.1; export adviser decides on a geo-block |
 | 6 | Is the source mirror enough? Does the FreeRTOS offer need a contact? | Mirror: yes for the download channel (GPLv2 §3, last paragraph). Other channels need more. FreeRTOS text needs no address, but every German example names one | Medium-high | Add a postal and e-mail contact to the offers; cheap either way |
-| 7 | IronFlockOS-branded image from Ubuntu binaries | Open, depends on Canonical. Policy unchanged since 2015: without a licence, remove Ubuntu trademarks and "recompile". Canonical asked Linux Mint to sign a licence | Low-medium | Written question to Canonical |
+| 7 | IronFlockOS-branded image from Ubuntu binaries | Canonical's written answer points to a licence or a rebuild for a commercial own-named deb image (policy; Shuttleworth 2016: "a major difference between Ubuntu Core and classic (deb-based) Ubuntu images"). Practice: Pop!_OS, TUXEDO OS, Zorin, Mint and others ship Canonical's unmodified binaries under their own names with no published agreement and no known enforcement | Medium (on what exists), low (on permission) | Do the branding build items now; ask Canonical whether a licence is needed and whether Ubuntu Pro for Devices covers it |
 | 8 | Revocable licence; seek a written agreement? | No public distribution agreement found. NVIDIA has a partner network with a "Distro and OS" category; the Agreement changes only "in a writing signed by" both | Low (thin evidence) | Write to `driver-licensing@nvidia.com` and ask what a distribution agreement takes |
 
 ## 2. Question 1: images that NVIDIA's tools make from unchanged binaries
@@ -545,82 +545,208 @@ name the company that distributes, not the upstream author.
 ## 8. Question 7: an IronFlockOS-branded image built from Ubuntu binaries
 
 **The question.** Is an IronFlockOS-branded image built from Canonical's Ubuntu binaries
-fine under Canonical's IP policy?
+fine under Canonical's IP policy? The case is narrow: a company publishes a commercial
+embedded image under its own name. The image holds unmodified Ubuntu 24.04 binary
+packages from Canonical's archive, plus the company's own packages and NVIDIA's.
 
-### Text
+Many systems are built from Ubuntu's binaries, so the question has been asked in public
+for almost twenty years. This section collects the answers given, ranks them, and shows
+what the derivatives visibly do.
 
-Canonical's Intellectual property rights policy, still dated 15 July 2015 (same text at
-canonical.com and ubuntu.com):
+### Text: Canonical's current terms
 
-- "You can redistribute Ubuntu, but only where there has been no modification to it. You can redistribute Ubuntu in its unmodified form, complete with the installer images and packages provided by Canonical (this includes the publication or launch of virtual machine images). Any redistribution of modified versions of Ubuntu must be approved, certified or provided by Canonical if you are going to associate it with the Trademarks. Otherwise you must remove and replace the Trademarks and will need to recompile the source code to create your own binaries. This does not affect your rights under any open source licence applicable to any of the components of Ubuntu."
-- "If you need us to approve, certify or provide modified versions for redistribution you will require a licence agreement from Canonical, for which you may be required to pay."
-- "Ubuntu is an aggregate work of many works, each covered by their own licence(s). ... For the avoidance of doubt, where any other licence grants rights, this policy does not modify or reduce those rights under those licences."
-- "The disk, CD, installer and system images, together with Ubuntu packages and binary files, are in many cases copyright of Canonical (which copyright may be distinct from the copyright in the individual components therein) and can only be used in accordance with the copyright licences therein and this IPRights Policy."
-- "You cannot use the Trademarks in software titles."
+- **IP rights policy** (dated 15 July 2015, still current; the 14 May 2013 version has the same wording on modified versions):
+  - "You can redistribute Ubuntu, but only where there has been no modification to it. You can redistribute Ubuntu in its unmodified form, complete with the installer images and packages provided by Canonical (this includes the publication or launch of virtual machine images)."
+  - "Any redistribution of modified versions of Ubuntu must be approved, certified or provided by Canonical if you are going to associate it with the Trademarks. Otherwise you must remove and replace the Trademarks and will need to recompile the source code to create your own binaries. This does not affect your rights under any open source licence applicable to any of the components of Ubuntu."
+  - "If you need us to approve, certify or provide modified versions for redistribution you will require a licence agreement from Canonical, for which you may be required to pay."
+  - "Ubuntu is an aggregate work of many works, each covered by their own licence(s). ... For the avoidance of doubt, where any other licence grants rights, this policy does not modify or reduce those rights under those licences."
+  - "The disk, CD, installer and system images, together with Ubuntu packages and binary files, are in many cases copyright of Canonical (which copyright may be distinct from the copyright in the individual components therein) and can only be used in accordance with the copyright licences therein and this IPRights Policy."
+  - "You cannot use the Trademarks in software titles."
+- **Ubuntu Pro service terms** (dated 1 June 2026), a definition: "**Ubuntu Content**: means the set of installable Ubuntu packages and Ubuntu images which are published by Canonical and are redistributable in their original form subject to the IP policy documented at www.ubuntu.com/IP and their contents which may be included in Images as unpacked, integrated or derived materials." Clause 5: "Where a Service or Order is stated to include a trademark licence, Canonical grants to Customer a non-exclusive licence to use the trademarks of the Canonical group".
+- **Device offer.** Canonical's device pricing page lists, among the parts of "Ubuntu Pro for devices", "[Trademark use](https://canonical.com/legal/trademarks)". The Ubuntu Pro for Devices page says it "can be purchased for a one-time fee per device". Neither page says whether that subscription covers redistributing an own-branded image built from Ubuntu packages.
+- **Older terms, for history only.** The Ubuntu trademark policy as archived in December 2012 said: "Canonical grants permission for anyone to mirror or redistribute unmodified Ubuntu installation images, Ubuntu software packages, and Ubuntu package archives." It also said: "Note that if there's a commercial intent to your use, then you will always need a formal license from us for trademarks and copyright materials." The 2013 policy dropped the explicit permission for packages.
 
-### What Canonical and others have said in public
+### Existing answers, ranked by how directly they fit the case
 
-- Canonical blog, 15 July 2015 ("Clarification on IP Rights Policy"): the aggregate-work
-  clause was added after "a long conversation with the Free Software Foundation and
-  others".
-- FSF, 15 July 2015: "Today's "trump clause" makes clear that, for example, Canonical's
-  requirement that users recompile Ubuntu packages from source code before redistributing
-  them is not intended to and does not override the GPL's explicit permission for users
-  to redistribute covered packages in binary form ... While this change handles the
-  situation for works covered by the GPL, it does not help works covered by lax permissive
-  licenses (such as the X11 license) that do allow such additional restrictions."
-- Software Freedom Conservancy, 15 July 2015: "a trump clause does not help with regard
-  to non-copyleft licenses. Since Ubuntu is an aggregation of many copylefted and
-  non-copylefted programs, full permission to redistribute Ubuntu as a whole remains in
-  question." (Commentary.)
-- Ubuntu Community Council, 13 February 2014, on Linux Mint: "Linux Mint had been asked
-  to sign a license agreement in order to continue distributing software packages out of
-  the Ubuntu repositories" ... "Canonical already provides a license for the use of these
-  to the Ubuntu project and all of its distributions". Linux Mint's own posts on the
-  outcome were not found; Mint's blog search gave nothing relevant.
-- NVIDIA moderators send Jetson users to Canonical. suhash (moderator), 2024-09-11, topic
-  306285: "Trademarks are sprinkled everywhere in Ubuntu source code, so in order to
-  ensure you are adhering to this, i would suggest you reach out to Canonical and discuss
-  your approach." and "The answer was specifically for Linux Kernel in L4T and does not
-  extend to Ubuntu root file system." kayccc (moderator), 2025-01-22, topic 320934:
-  "Contact Canonical for any questions regarding the Canonical Intellectual Property
-  Rights Policy."
+1. **Mark Shuttleworth, founder of Ubuntu, 14 May 2016, snappy-devel mailing list.** A
+   device maker asked whether shipping hardware with an Ubuntu Core image needs an
+   agreement. He answered: "You don't need an agreement with Canonical to ship an Ubuntu
+   Core image, just make sure it uses the standard unmodified OS snap. ... we are happy
+   for devices to ship without a private agreement with the manufacturer. ... This is a
+   major difference between Ubuntu Core and classic (deb-based) Ubuntu images." This is
+   the most direct statement by Canonical's leadership on device images. By contrast, it
+   implies that a classic deb-based device image, which is what IronFlockOS builds, is
+   the case where Canonical expects an agreement.
+2. **Michael Hall, Ubuntu Community Council, 4 and 5 May 2015, ubuntu-community-team
+   list.** He was answering the Kubuntu lead and relaying what he called "Canonical's
+   position on the matter". On 4 May: "Derivatives can either work fully within the
+   archives, in which case they don't need to do anything, or they can request a license
+   grant from Canonical to base their derived product off of Ubuntu's archives. If they
+   don't wish to do either, then they should take the source code and build their own
+   archives from that, as Ubuntu does with Debian and CentOS does from Red Hat." On 5 May:
+   "Moreover, for non-commercial derivatives Canonical offers free (or nearly free) use of
+   Ubuntu's archives for the distribution for those distros. ... All we ask is that they
+   don't call it Ubuntu. This works our well for Mint and Elementary and a number of other
+   derivatives". The free or nearly free terms are stated for non-commercial derivatives
+   only.
+3. **The Linux Mint case, 2013-2014.**
+   - InfoWorld, 11 December 2013, citing DistroWatch: "Clem claims he has been asked by Canonical’s legal department to license the binary packages used by Ubuntu."
+   - Ubuntu Community Council, 13 February 2014: "Linux Mint had been asked to sign a license agreement in order to continue distributing software packages out of the Ubuntu repositories" ... "Canonical already provides a license for the use of these to the Ubuntu project and all of its distributions". The Council called it a licence "to help ensure" that Mint can continue.
+   - CIO (press), 2015: "Later, the Linux Mint team ended up signing a deal with Canonical to use binaries for an undisclosed fee (if any)."
+   - No statement by Mint itself on the terms was found. The DistroWatch issue could not be fetched (it returned an empty page).
+4. **Ubuntu community voices in 2025 and 2026, all unofficial.**
+   - Discourse, January 2026: a robotics start-up asked almost this exact question, a modified Ubuntu pre-installed on its own board with all Ubuntu marks removed. popey, a community moderator who wrote in 2025 that he is "Not a Canonical employee (but used to be one)", answered: "I am confident you will not get a straight answer to the questions you asked. Many people have tried, all have (as far as I know) failed." and "you should very seriously consider entering into a paid license agreement with Canonical to ship Ubuntu image." Another long-time contributor wrote: "Please contact legal@canonical.com for such questions, there are pretty fine grained requirements they will be able to explain to you".
+   - Discourse, January 2025, on a shop selling PCs with a customised Ubuntu, the same moderator wrote: "The general advice is if you modify the image, it’s not Ubuntu, so you can’t call it Ubuntu." He named TUXEDO OS as the example of a modified Ubuntu shipped under another name.
+5. **Ubuntu Community Council member, 13 October and 2 December 2025, ubuntu-devel
+   list.** He asked Canonical to clarify the policy for "remixes". He wrote that the IP
+   policy "suggests that the entire way in which remixes work is, at best, a gray area,
+   and at worst, completely disallowed". He added that Qubes OS does not distribute
+   Ubuntu VMs "for fear of legal action being taken against them by Canonical". No reply
+   appears in the list archive from October 2025 to November 2026.
+6. **Matt Zimmerman, then Ubuntu's CTO, 8 January 2007, ubuntu-devel list.** This
+   predates the 2013 policy; it shows what Canonical once called fair use. On
+   `/etc/lsb-release`: "Perhaps changing DISTRIB_DESCRIPTION but not DISTRIB_ID is the
+   right thing to do." On version strings like "1.4.4-0ubuntu1": "No, this refers to the
+   Ubuntu version of the package (which is the same package being used in the
+   derivative)." On naming: "'based on Ubuntu ...' requires no prior permission; this is
+   fair use of the trademark to refer to Ubuntu itself." On the logo: "Use of the logo to
+   refer to a derivative distribution requires prior permission." On the archives: "The
+   Ubuntu archives are a public service for anyone to use".
+7. **The 2016 cloud dispute** (Canonical blog, 1 December 2016, by Mark Shuttleworth).
+   The provider "has breached its contract and is publishing insecure, broken images of
+   Ubuntu". The concern was images that claim to be Ubuntu: "users expect that ‘all
+   things that claim to be Ubuntu are genuine’". It concerned the Ubuntu name and a
+   contract, not images under another name.
+8. **Container images.** Canonical maintains the official `ubuntu` image on Docker Hub.
+   Its page says: "As for any pre-built image usage, it is the image user's
+   responsibility to ensure that any use of this image complies with any relevant
+   licenses for all software contained within." Canonical's Ubuntu Pro description
+   restricts only images made from Pro content: "Container images may be generated from
+   Ubuntu Pro bits only if the resulting container images are deployed to Ubuntu
+   Pro-covered machines." No Canonical statement restricting republished images built
+   from the public archive was found.
 
-### Practice
+### Critics and commentary (not Canonical; marked as commentary)
 
-- **Pop!_OS** (System76) serves a copy of the Ubuntu archive under its own host:
-  `http://apt.pop-os.org/ubuntu/dists/noble/Release` reads "Origin: Ubuntu", "Label:
-  Ubuntu", "Suite: noble". So Ubuntu binaries go out under the Pop!_OS name. Whether
-  System76 has an agreement with Canonical is not public. Nothing was found for
-  elementary OS.
-- **Linux Mint** was asked to sign a licence (above).
-- **Carrier-board makers** (Seeed, Advantech, AVerMedia) publish Ubuntu-based Jetson
-  images under their own product names. No Canonical licence is visible.
-- **Canonical's own Jetson images** are "Ubuntu", with NVIDIA's userspace added by the
-  user afterwards. They do not answer the question for a third party.
+- **Jonathan Riddell**, Kubuntu founder and Ubuntu archive admin, KDE blog, 14 February 2014: "no licence is needed to make a derivative distribution of Kubuntu. All you need to do is remove obvious uses of the Kubuntu trademark. Any suggestion that somehow compiling the packages causes Canonical to own extra copyrights is nonsense." On 1 May 2015 (ubuntu-community-team): "Canonical does not hold the copyright on binary packages any more than it does on the source packages." He left the Kubuntu lead role later that month (LWN, 28 May 2015: "Jonathan Riddell forced out of Kubuntu").
+- **Matthew Garrett**, LWN comments:
+  - 28 May 2015: "Nobody knows what they're claiming, because the policy is unclear and they refuse to answer anybody attempting to seek clarity. Canonical employees have indicated that the policy requires you to rebuild packages even if they embody no trademarks".
+  - 20 November 2015: "Every question I've asked on this front has either been ignored or I've been explicitly told it won't be answered."
+  - 21 April 2025: Canonical "has demanded license payments from Ubuntu derivatives that simply imported Canonical binary packages rather than rebuilding them" and "has also never made a public statement about what would need to be stripped from source packages before a full rebuild would no longer be a trademark violation."
+  - His own blog could not be fetched (timeouts); only these LWN comments were read.
+- **Jono Bacon**, who worked at Canonical ("When I was at Canonical"), blog, 28 August 2015: "If someone else takes those binaries and builds a commercial product from them, I can understand Canonical being a bit miffed about that and asking the company to pay it forward and cover some of the costs." He also wrote that the compiled-binary copyright question is open: "Some believe it does, some believe it doesn’t. My opinion: I just *don’t know*."
+- **FSF and SFC, 15 July 2015.** After the policy change, the GPL's binary redistribution right prevails for GPL packages. The FSF: "it does not help works covered by lax permissive licenses (such as the X11 license) that do allow such additional restrictions." The SFC: "full permission to redistribute Ubuntu as a whole remains in question."
+- **Community readings of "modified version".**
+  - A list member, 3 May 2015: "A grey area may be spinning an updated version of a ISO, in which case is it a modified version of Ubuntu because you've messed with the ISO, or not since it is all official, unmodified, Ubuntu packages?"
+  - A Discourse user who describes themself as an in-house lawyer, 15 November 2026: "even Canonical’s own published IP policy doesn’t spell out that level of technical detail (package names, system files, etc.), which is exactly why it needs a direct answer from them".
+- No law-firm note or court decision on the compiled-binary copyright argument was found.
+
+### Practice: what systems built from Ubuntu's binaries do
+
+Each system below was checked from its own files: package indexes, `.deb` contents, build
+scripts and ISO manifests, all fetched on 2026-11-17.
+
+| System | Ubuntu packages | Package source | `os-release` NAME / ID / ID_LIKE | Ubuntu names left | Agreement with Canonical |
+| --- | --- | --- | --- | --- | --- |
+| Linux Mint 22.3 | Canonical's binaries; own build of `base-files` (`13ubuntu10mint22.3.0`) | `archive.ubuntu.com`, `security.ubuntu.com` | "Linux Mint" / `linuxmint` / "ubuntu debian"; `DISTRIB_ID=LinuxMint` | ID_LIKE, `UBUNTU_CODENAME`, `/etc/dpkg/origins/ubuntu`; motd scripts emptied | Asked to sign (2014); a deal reported by the press, terms unknown |
+| Pop!_OS 24.04 (System76, commercial) | Canonical's binaries; 50 Ubuntu packages rebuilt and pinned first | Own copy of the archive at `apt.pop-os.org/ubuntu`, Release file byte-identical to Ubuntu's ("Origin: Ubuntu") | "Pop!_OS" / `pop` / "ubuntu debian" via `dpkg-divert`; `DISTRIB_ID=Pop` | ID_LIKE, `UBUNTU_CODENAME`, own packages named `ubuntu-minimal` | None public |
+| elementary OS 8 | Canonical's binaries; 80 overrides in a PPA | `archive.ubuntu.com` | "elementary OS" / `elementary` / "ubuntu debian" | ID_LIKE, `UBUNTU_NAME="Ubuntu"`, `UBUNTU_PRETTY_NAME`; motd-news still fetches `motd.ubuntu.com` | None public (named by Michael Hall in 2015 as a derivative it "works our well" for) |
+| Zorin OS 18 (commercial editions) | Canonical's binaries; 261 overrides in a PPA | `archive.ubuntu.com` | "Zorin OS" / `zorin` / "ubuntu debian" | ID_LIKE, motd-news, `/etc/dpkg/origins/zorin` "Parent: Ubuntu" | None public |
+| KDE neon | Canonical's builds, except about 500 of 2,058 packages that neon builds itself | `archive.ubuntu.com` | "KDE neon" / `neon` / "ubuntu debian" | `plymouth-theme-ubuntu-text`, `ubuntu-minimal`; help text disabled ("disable ubuntu references") | FAQ: "It is otherwise unrelated to the Ubuntu project or Canonical." |
+| TUXEDO OS 24.04 (laptop vendor, commercial) | Canonical's binaries (`base-files 13ubuntu10.5`) plus `tuxedo-base-files` | Own mirror, Release file byte-identical to Ubuntu's | "TUXEDO OS" / `tuxedo` / "ubuntu debian" via `dpkg-divert` | `DISTRIB_ID=Ubuntu` kept, `ubuntu-pro-client` | None public |
+| Linux Lite 8.0 | Canonical's binaries, no `base-files` fork | `archive.ubuntu.com` | Only `PRETTY_NAME` replaced by its build script; NAME and ID not confirmed | Probably most of Ubuntu's `os-release` | None public |
+| NVIDIA Jetson Linux R36.4.4 sample rootfs | Canonical's binaries, built from `ubuntu-base-22.04.2` with `apt-get install` | `ports.ubuntu.com` | `DISTRIB_ID=Ubuntu`, `/etc/issue` "Ubuntu 22.04.5 LTS" | Everything; it ships as Ubuntu, with `ubuntu-desktop` | Canonical describes a "collaboration with NVIDIA"; no published licence covering the sample rootfs |
+| ctrlX OS (Bosch Rexroth, industrial) | Ubuntu Core | Canonical | not checked | not checked | Yes, public: Canonical "provides open source security, support and software customization services for ctrlX OS" |
+
+**The pattern.**
+
+- Almost all of them ship Canonical's binary packages unchanged. They take them straight
+  from Canonical's archive, or from a byte-identical copy signed with Ubuntu's key.
+- They rebuild or divert only a few packages: `base-files`, branding, installer and some
+  drivers. They put their own name in `os-release` (NAME, ID, PRETTY_NAME, the URLs), in
+  `lsb-release` (DISTRIB_ID or at least DISTRIB_DESCRIPTION) and in `/etc/issue`.
+- All of them keep `ID_LIKE="ubuntu debian"`, `UBUNTU_CODENAME`, the `-0ubuntu` version
+  strings and packages named `ubuntu-*`.
+- None of them rebuilds the whole archive. None of them uses the Ubuntu name or logo as
+  its product name.
+- No commercial derivative has published an agreement with Canonical. The only published
+  arrangements are Mint's, known from the Council and the press, and Canonical's own
+  customers (ctrlX OS, Ubuntu Core).
+- No public enforcement action by Canonical against an own-named derivative was found.
+  The one public dispute (2016) concerned images sold as "Ubuntu" under a contract.
 
 ### Reading
 
-The policy distinguishes two cases. Unmodified Ubuntu may be redistributed. A modified
-Ubuntu without Canonical's approval must lose the Trademarks and, per the policy, be
-"recompiled". The trump clause removes the recompile demand for GPL packages but, per FSF
-and SFC, not for permissively licensed ones. IronFlockOS is a modified Ubuntu (other
-packages, other configuration, its own name). Two practical points follow:
+The existing answer has two layers, and they disagree.
 
-- The image should not carry Ubuntu trademarks where IronFlock can avoid it: for example
-  `/etc/os-release`, `/etc/lsb-release`, `/etc/issue`, motd and any logos from
-  `base-files` or `ubuntu-*` packages. The image was not checked for this; it is a
-  point for the build.
-- The "recompile" demand for non-GPL packages stays open. Only Canonical can settle it.
+- **What Canonical has written.** For an own-named product built from Canonical's
+  binaries, Canonical's written position is consistent from 2013 to today.
+  - The image may be called "based on Ubuntu" but not "Ubuntu".
+  - Otherwise, "remove and replace the Trademarks" and "recompile".
+  - Or take "a licence agreement ..., for which you may be required to pay".
+  - The free or nearly free archive use mentioned in 2015 was for "non-commercial
+    derivatives".
+  - Shuttleworth's 2016 answer draws the line for devices explicitly: Ubuntu Core with
+    the unmodified OS snap needs no agreement; classic deb-based images are different.
+  - Canonical has never published which marks must go, or which binaries must be rebuilt.
+    Its staff and moderators say it will not.
+- **What the derivatives do.** Dozens of systems, commercial ones included (System76,
+  TUXEDO, Zorin), ship Canonical's unmodified binaries under their own names. They
+  replace the visible branding and keep the technical references (ID_LIKE, codename,
+  version strings). They publish no agreement, and no enforcement against them is known.
+  This is tolerance, not permission.
+
+For IronFlockOS this means: a commercial, own-named embedded image of unmodified Ubuntu
+binaries is exactly the case that Canonical's texts keep for a licence or a rebuild. It
+is also exactly what many companies do without a visible licence. Only Canonical can turn
+that tolerance into a permission. Whether Canonical's claimed copyright in compiled
+binaries holds, for example under German law, where software is protected only as its
+author's own intellectual creation (§ 69a UrhG), is a question for the lawyer. No source
+fetched for this research decides it.
+
+### Build items that can be checked now
+
+These items follow the derivatives' pattern and Canonical's own 2007 guidance. They do
+not need Canonical's answer. They reduce the "associate it with the Trademarks" risk; they
+do not settle the "recompile" clause.
+
+1. `/usr/lib/os-release`: the build already writes IronFlockOS's own file
+   (`build/osrelease.sh`). Keep `ID_LIKE="ubuntu debian"` (every derivative does).
+   Check that no `UBUNTU_*` field and no Ubuntu URL slips in.
+2. `/etc/lsb-release` (from Ubuntu's `base-files`): set `DISTRIB_DESCRIPTION` to
+   IronFlockOS. For `DISTRIB_ID`, Zimmerman's 2007 advice was to keep it; Mint, Pop!_OS
+   and the others replace it, TUXEDO keeps "Ubuntu". The safer choice by current practice
+   is IronFlockOS's own ID.
+3. `/etc/issue`, `/etc/issue.net`, `/etc/legal`: replace them with IronFlockOS text. The
+   repository's overlay has `/etc/motd` but none of these files.
+4. `/etc/update-motd.d/` (`00-header`, `10-help-text`, `50-motd-news`, and the ESM
+   scripts of `ubuntu-pro-client`): remove or neutralise them, as Mint and neon do. Also
+   stop `motd-news` from fetching `motd.ubuntu.com`.
+5. Plymouth, GRUB and any logos: the image must show no Ubuntu logo. Use of the logo for
+   a derivative "requires prior permission" (Zimmerman, 2007).
+6. Whether to install `ubuntu-pro-client` at all: it advertises Canonical's service under
+   the Ubuntu name.
+7. Keep without change: package names, `-0ubuntu` version strings,
+   `/etc/dpkg/origins/ubuntu` and apt sources pointing at `ports.ubuntu.com` (or a
+   byte-identical copy). Zimmerman 2007 says version strings need no change, and every
+   derivative keeps them.
+8. Product text: "IronFlockOS, based on Ubuntu 24.04" is fair use by Canonical's own 2007
+   words and by the 2012 policy. "Ubuntu" alone, or the logo, is not.
 
 ### For the lawyer or Canonical
 
-**Draft question to Canonical:** "We build an embedded Linux image for NVIDIA Jetson
-devices from unmodified Ubuntu 24.04 binary packages (ports.ubuntu.com), together with
-our own packages, and publish it under our own product name with Ubuntu trademarks
-removed. Does Canonical's IP Rights Policy allow this without a licence agreement, or do
-we need one for the packages that are not under a copyleft licence? If we need one, what
-are its terms?"
+A written question to Canonical is still needed if IronFlock wants permission rather than
+tolerance. Canonical's published terms do not answer it; they point to a licence. Expect
+a slow or no answer: one in January 2026 got none in public, and the Community Council's
+October 2025 request got none on the list. The alternatives are Ubuntu Pro for Devices,
+if it covers this, or the Debian userspace IronFlockOS already builds for other targets,
+if NVIDIA's packages allow it.
+
+**Shortest form of the question:** "We publish a commercial embedded Linux image under
+our own name. It contains unmodified Ubuntu 24.04 binary packages from your archive, with
+Ubuntu logos and product naming removed and 'based on Ubuntu' stated. Do we need a
+licence agreement with Canonical for this, and if so, does Ubuntu Pro for Devices cover
+it?"
 
 ## 9. Question 8: a revocable licence, or a written agreement with NVIDIA
 
@@ -699,7 +825,13 @@ These points of `docs/jetson-licence-review.md` are out of date or incomplete:
 6. **Product liability.** Question 4 should also name the EU Product Liability Directive
    2024/2853, in force for products placed on the market after 9 December 2026.
 
-The Canonical policy the review cites (15 July 2015) is still the current one.
+7. **Ubuntu (question 7).** The Canonical policy the review cites (15 July 2015) is still
+   the current one. The review's question should name the device case: Canonical's
+   founder said in 2016 that an Ubuntu Core image with the unmodified OS snap needs no
+   agreement, and set classic deb-based images apart. The review should also list the
+   branding files the image still takes from Ubuntu's packages (`/etc/lsb-release`,
+   `/etc/issue`, `/etc/issue.net`, `/etc/legal`, `/etc/update-motd.d/`), next to the
+   `os-release` the build already writes.
 
 ## 11. Gaps: where no evidence was found
 
@@ -707,8 +839,17 @@ The Canonical policy the review cites (15 July 2015) is still the current one.
   Not researched.
 - Q5: any NVIDIA export classification for Jetson software; BAFA guidance on the
   Cryptography Note; the EU embargo regulations other than Russia.
-- Q7: Linux Mint's own statement on the outcome, and whether Pop!_OS or elementary OS
-  have agreements with Canonical.
+- Q7:
+  - Linux Mint's own statement on the 2014 deal and its terms. The DistroWatch interview
+    could not be fetched, and only press reports and the Ubuntu Community Council speak
+    of it.
+  - Any agreement, or the absence of one, for Pop!_OS, elementary OS, Zorin OS, TUXEDO OS
+    or Linux Lite. NVIDIA's arrangement for its Ubuntu-branded sample rootfs.
+  - Whether Ubuntu Pro for Devices includes a licence to redistribute an own-branded image.
+    The pages show only "Trademark use".
+  - Matthew Garrett's blog posts, which timed out; only his LWN comments were read.
+  - The `os-release` NAME and ID of Linux Lite 8.0.
+  - Any court decision or law-firm note on copyright in compiled binaries.
 - Q8: the terms of any NVIDIA partner or distribution agreement.
 - Q1: whether the partner packages (Seeed, Advantech, AVerMedia, Antmicro) contain
   NVIDIA's licence file; they were not opened. balenaCloud's and Peridio's download flows
@@ -789,6 +930,39 @@ tool, not saved).
 - https://www.networkworld.com/article/748068/opensource-subnet-making-sense-of-the-ubuntu-licensing-fiasco.html — press report on the Mint case (background only).
 - https://blog.linuxmint.com/?s=Canonical — Mint blog search; nothing on the agreement.
 - http://apt.pop-os.org/ubuntu/dists/noble/Release — Pop!_OS's copy of the Ubuntu archive.
+
+### Question 7: Canonical's statements, critics and derivatives
+
+- https://canonical.com/legal/intellectual-property-policy?format=md and https://canonical.com/legal/intellectual-property-policy/2013-05-14?format=md — the current IP policy and its 2013 version.
+- https://canonical.com/legal/ubuntu-pro-service-terms?format=md — Ubuntu Pro service terms of 1 June 2026, definition of "Ubuntu Content", trademark licence clause.
+- https://canonical.com/legal/ubuntu-pro-description?format=md — Ubuntu Pro description, container images from Pro content.
+- https://ubuntu.com/pricing/devices?format=md and https://ubuntu.com/pro/devices?format=md — device services, "Trademark use", one-time fee per device.
+- https://ubuntu.com/legal/trademarks — current trademark list, no Remix rules.
+- https://web.archive.org/web/20121228045716id_/http://www.ubuntu.com/aboutus/trademarkpolicy — the Ubuntu trademark policy as archived in December 2012 (Remix rules, commercial intent).
+- https://lists.ubuntu.com/archives/snappy-devel/2016-May/001843.html — Mark Shuttleworth, 14 May 2016, Ubuntu Core images need no agreement, unlike deb-based images.
+- https://lists.ubuntu.com/archives/ubuntu-community-team/2015-May/ (messages 000422, 000426, 000429, 000432, 000434, 000435, 000438, 000441, 000442, 000443, 000457, 000458, 000462, 000464, 000472, 000474, 000478, 000480) — the May 2015 thread on the IP policy: Jonathan Riddell, Michael Hall and others.
+- https://lists.ubuntu.com/archives/ubuntu-devel/2025-October/043516.html and https://lists.ubuntu.com/archives/ubuntu-devel/2025-December/043533.html — Community Council member's request for clarification on remixes; subject indexes of ubuntu-devel, October 2025 to November 2026, checked for replies.
+- https://lists.ubuntu.com/archives/ubuntu-devel/2007-January/023143.html (also 023138, 023188) and https://lists.ubuntu.com/archives/ubuntu-devel/2006-March/016900.html — Matt Zimmerman on derivatives, trademarks and the archives.
+- https://raw.githubusercontent.com/ubuntu/wiki-archives/main/UbuntuWiki/D/DerivativeDistroHowto.wiki — archived Ubuntu wiki guide for derivatives (unofficial, quotes Zimmerman).
+- https://discourse.ubuntu.com/t/74625 — January 2026 thread on pre-installing a modified Ubuntu on commercial hardware.
+- https://discourse.ubuntu.com/t/54191 — January 2025 thread on selling PCs with a customised Ubuntu.
+- https://canonical.com/blog/taking-a-stand-against-unstable-risky-unofficial-ubuntu-images?format=md — Mark Shuttleworth, 1 December 2016, the cloud dispute.
+- https://hub.docker.com/v2/repositories/library/ubuntu/ — Docker Hub's official `ubuntu` image description.
+- https://blogs.kde.org/2014/02/14/no-licence-needed-kubuntu-derivative-distributions — Jonathan Riddell, 14 February 2014 (commentary).
+- https://www.jonobacon.com/2015/08/28/ubuntu-canonical-and-ip/ — Jono Bacon, 28 August 2015 (commentary).
+- https://lwn.net/Articles/646235/, https://lwn.net/Articles/646275/, https://lwn.net/Articles/665263/, https://lwn.net/Articles/1018189/ — LWN comment threads of 2015 and 2025, Matthew Garrett's comments (commentary).
+- https://www.infoworld.com/article/2243953/will-canonical-force-linux-mint-to-license-ubuntu-binary-packages.html — InfoWorld, 11 December 2013, the Mint request.
+- https://www.cio.com/article/2949217/canonical-changes-licensing-terms-to-comply-with-gpl.html — CIO, 2015, Mint "signing a deal".
+- Derivatives, from their own files:
+  - Linux Mint: http://packages.linuxmint.com/dists/zena/ and `pool/` (`base-files_13ubuntu10mint22.3.0_amd64.deb`, `mintsources_2.4.3_all.deb`, `ubuntu-system-adjustments_2025.12.16-zena_all.deb`).
+  - Pop!_OS: http://apt.pop-os.org/ubuntu/dists/noble/, http://apt.pop-os.org/release/dists/noble/ (`pop-default-settings`), https://github.com/pop-os/iso; compared with http://archive.ubuntu.com/ubuntu/dists/noble/Release.
+  - elementary OS: https://ppa.launchpadcontent.net/elementary-os/os-patches/ubuntu/ and https://github.com/elementary/os (branch `livebuild`).
+  - Zorin OS: https://ppa.launchpadcontent.net/zorinos/stable/ubuntu/ and https://ppa.launchpadcontent.net/zorinos/patches/ubuntu/.
+  - KDE neon: https://files.kde.org/neon/images/desk/user/20261025-1825/ (manifest), https://archive.neon.kde.org/user/, https://invent.kde.org/neon/neon/livecd-rootfs/-/raw/Neon/release_noble/live-build/auto/config, https://neon.kde.org/faq.
+  - Linux Lite: https://repo.linuxliteos.com/linuxlite/ and https://www.linuxliteos.com/forums/archive/index.php/thread-8189.html.
+  - TUXEDO OS: https://os.tuxedocomputers.com/ (manifest), https://txos.tuxedocomputers.com/ubuntu/ (`tuxedo-base-files`), https://mirrors.tuxedocomputers.com/ubuntu/mirror/archive.ubuntu.com/ubuntu/dists/noble/Release.
+  - NVIDIA sample rootfs: the first 30 MB of https://developer.download.nvidia.com/embedded/L4T/r36_Release_v4.4/release/Tegra_Linux_Sample-Root-Filesystem_R36.4.4_aarch64.tbz2 and of `Jetson_Linux_R36.4.4_aarch64.tbz2` (`tools/samplefs/`), https://docs.nvidia.com/jetson/archives/r36.4.4/DeveloperGuide/ (Root File System, Legal); https://canonical.com/blog/ubuntu-now-officially-supports-nvidia-jetson-powering-the-future-of-ai-at-the-edge.
+  - ctrlX OS: https://canonical.com/blog/bosch-rexroth-adopts-ubuntu-core-and-snaps-for-app-based-ctrlx-automation-platform and https://apps.boschrexroth.com/microsites/ctrlx-automation/en/portfolio/ctrlx-os/.
 
 ### GPL, FreeRTOS and written offers
 
