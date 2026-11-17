@@ -122,7 +122,7 @@ decision), in progress.
 | 8.5 | The kiosk app | its own repository | own plan | the contract in kiosk-plan.md | open, built outside this repository |
 | 8.6 | Acceptance on the first machine | ironflockos, hardware | 1 | 8.1 to 8.5, 8.7 | prepared (`screen-report` and the checklist); open: the report from the machine on the next release, and the keys, touch and a recording with a person at the machine |
 | 8.7 | No black between the firmware's picture and the splash | ironflockos, hardware | 3 | 8.1, 8.2, 8.4 | done in `v0.17.0` with GRUB's background colour (#212); open: the proof on the machine (8.6) |
-| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | parked (Marko, 2026-11-16) until a panel can be looked at |
+| 8.8 | GRUB draws the splash's picture too | ironflockos, hardware | 1.5 | 8.7, 8.6 | parked (Marko, 2026-11-16) until a panel can be looked at; a new boot script reaches installed devices since ADR-0022 |
 
 Totals in days as planned: Phase 0 remaining 4.5; Phase 1 20; Phase 2 31.5 across four
 repositories; Phase 3 9; Phase 4 6; Phase 4b 6; Phase 5 15 (+8 follow-up); Phase 6 25
@@ -866,6 +866,7 @@ record or pull request; none has a work package issue.
 | `v0.15.0` | 2026-11-11 | Proxy per device; factory reset; network profiles from the boot medium; app data survives OS updates | ADR-0014, ADR-0015, ADR-0016 |
 | `v0.16.0` | 2026-11-11 | Every name is `ironflockos`; the `ironflock` command in the image; the release reuses the images its pull request tested; every test runs before the merge | ADR-0017, ADR-0018, ADR-0019 |
 | `v0.17.0` | 2026-11-12 | A machine panel PC on the stock image (repair at start, AppArmor); the screen (Phase 8); trusted CAs from the boot medium | ADR-0020, ADR-0021, #212 |
+| next release | not released yet | An OS update renews the boot script on the IRONFLOCKOS partition, with one trial boot; devices installed with 0.17.0 change over to the loader by themselves | ADR-0022 |
 
 Open from these: the acceptance of ADR-0020 on the machine (with WP-8.6), and the
 factory reset's QEMU test through `ironflock os reset`, which joins the QEMU tests with

@@ -20,7 +20,7 @@ stage:
 | signing material | `build/signing.sh` | `keyring.pem` the image trusts, the signer certificate and key. Throwaway by default; a release build (`IRONFLOCKOS_SIGNING=release`) puts the IronFlockOS root CA into the image and seals the bundle with a throwaway key for `release.yml`'s sign job (ADR-0006, `docs/signing.md`) |
 | rootfs | `build/mkrootfs.sh` | minbase tree of the target's distribution (see below) from `mmdebstrap` with `profiles/base/packages`, its per-distribution and per-architecture lists, the target's `targets/<target>/packages` and the variant's `profiles/<variant>/packages` (no Recommends), Docker CE from download.docker.com at the versions in `distros/<distro>/versions`; for `nvidia` also NVIDIA's driver, its open kernel modules and the container toolkit (see below) |
 | customisation | `build/customize.sh` | `overlay/` copied in, RAUC `system.conf` and keyring, `repart.d`, os-release, no accounts but a locked root, kernel at `/vmlinuz`, units enabled and masked, IronFlock baked in (`build/bake.sh`; not into the installer), package manifest, timestamps clamped to the commit time |
-| disk image | `build/mkimage.sh` (EFI targets), `build/mkimage-rpi.sh` (Raspberry Pi: IRONFLOCKOS with `autoboot.txt`, boot-a from `/boot/firmware`, an empty boot-b, slot A) | IRONFLOCKOS partition (ESP: shim, Debian's signed GRUB, `grub.cfg`, `grubenv`), slot A as ext4 of the full slot size, assembled by `genimage` from `targets/<target>/genimage.cfg`, compressed |
+| disk image | `build/mkimage.sh` (EFI targets), `build/mkimage-rpi.sh` (Raspberry Pi: IRONFLOCKOS with `autoboot.txt`, boot-a from `/boot/firmware`, an empty boot-b, slot A) | IRONFLOCKOS partition (ESP: shim, Debian's signed GRUB, the loader `grub.cfg` at both of GRUB's paths, the boot script `boot.cfg`, `grubenv`), slot A as ext4 of the full slot size, assembled by `genimage` from `targets/<target>/genimage.cfg`, compressed |
 | bundle | `build/mkbundle.sh` | verity RAUC bundle of slot A's filesystem, `compatible=ironflockos-<target>-<variant>[-rt]`, signed and verified against the image keyring (none for the installer); on `rpi-arm64` with the boot partition as `boot.vfat` |
 
 ### The distribution
@@ -81,9 +81,10 @@ with nobody there to run `fsck` by hand. A repair can drop damaged files. The
 check is not forced at every boot: it runs when the filesystem is marked as not
 clean or as having errors. The root slot is mounted by the initramfs, where
 ext4 replays its journal; a slot that does not boot falls back to the other one
-("Boot and A/B"). On the EFI targets the command line is in `grub.cfg` on the
-IRONFLOCKOS partition, which an update does not write, so a device installed
-before this keeps the preen.
+("Boot and A/B"). On the EFI targets the command line is in the boot script on
+the IRONFLOCKOS partition, which an update renews from the release after 0.17.0
+on (ADR-0022), so a device installed before 0.17.0 gets the repair with that
+update.
 
 | Path | From |
 |------|------|
@@ -163,13 +164,15 @@ removable-media path `EFI/BOOT/BOOTX64.EFI` (`BOOTAA64.EFI` on arm64; no boot
 entry is needed), shim starts and checks Debian's signed GRUB next to it
 (`grubx64.efi`), and GRUB has shim check Debian's kernel. With Secure Boot off
 the same chain boots without the checks. Debian's GRUB has its modules built
-in and reads `grub.cfg` next to itself, in `EFI/BOOT` (else its prefix's
-`EFI/debian/grub.cfg`, which `build/mkimage.sh` writes to source the same
-script); the script points `${prefix}` at `EFI/BOOT`, where `grubenv` is. `grub.cfg`
-(`targets/amd64-efi/grub/grub.cfg`) is RAUC's reference A/B script: it picks the
-first slot in `ORDER` that is good and not yet tried, sets its `_TRY` flag in
-`grubenv`, and boots that slot's `/vmlinuz` with `root=PARTUUID=…` and
-`rauc.slot=A|B`. A slot that is never marked good is skipped on the next boot.
+in and reads `grub.cfg` next to itself, in `EFI/BOOT`, and only when that file
+cannot be opened its prefix's `EFI/debian/grub.cfg`. Both are the loader
+(`targets/amd64-efi/grub/loader.cfg`, [ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md)),
+which points `${prefix}` at `EFI/BOOT`, where `grubenv` is, and runs the boot
+script `boot.cfg` next to it. `boot.cfg` (`targets/amd64-efi/grub/boot.cfg`) is
+RAUC's reference A/B script: it picks the first slot in `ORDER` that is good and
+not yet tried, sets its `_TRY` flag in `grubenv`, and boots that slot's
+`/vmlinuz` with `root=PARTUUID=…` and `rauc.slot=A|B`. A slot that is never
+marked good is skipped on the next boot.
 The device-agent marks the booted slot good once it has reached the platform
 (device-agent 1.6.0); nothing in the image does it at boot for a new system.
 That first mark proves the slot: `ironflockos-slot-proven` leaves a file in the
@@ -180,6 +183,49 @@ connection does not move the device to its other slot, and a slot that fails
 within those two minutes still falls back. A device that never
 reaches the platform keeps booting its good slot: when every slot has been
 tried, GRUB starts over with the first good one.
+
+### The boot script and its loader
+
+An update writes a root slot, not the IRONFLOCKOS partition. So every slot of
+the EFI targets carries its release's script and loader in
+`/usr/lib/ironflockos/boot/` (`build/customize.sh` renders them for the target,
+`build/mkimage.sh` puts the same files on a new image's partition), and
+`ironflockos-boot-script` (`/usr/lib/ironflockos/boot-script`) brings a newer
+one to the partition ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md)):
+
+- Each file's first line names its version, which goes up whenever the file
+  changes and never down; its last line marks it whole. The script puts its
+  version on the kernel command line, `ironflockos.boot_script=N`; 0.17.0's
+  names none, and `0` is the loader's last resort.
+- Once the booted slot has proven itself (`ironflockos-slot-proven`) and is good
+  in this boot, a newer script of the slot's is staged as `boot-next.cfg` (whole,
+  by a rename), and `grubenv` gets `IRONFLOCKOS_SCRIPT_TRIAL=staged` and the
+  slot. The loader runs it once at the next boot, on that slot only, after it
+  wrote `tried`; when it boots nothing, GRUB goes on to `boot.cfg` and then to
+  the last resort in the same boot. When the boot reaches the proof of
+  `ironflockos-slot-keep` (two minutes after `multi-user.target`), it becomes
+  `boot.cfg`. A boot that is not confirmed is the trial's failure: the next
+  boot runs `boot.cfg` and gives the slot back the try the trial took; the
+  version goes to `IRONFLOCKOS_SCRIPT_FAILED` and only a higher one is staged.
+- An update installed while a script is staged cancels it (RAUC's post-install
+  handler). The new slot boots first with the script in use and stages its own
+  once it has proven itself.
+- A device installed with 0.17.0 has the whole script as `grub.cfg`. Once its
+  updated slot has proven itself, it changes over: `EFI/debian/grub.cfg` becomes
+  the loader, `grub.cfg` is renamed to `boot.cfg`, and the loader takes its
+  place, in this order so that GRUB finds a file that boots at every instant.
+  Then the slot's script has its trial.
+- At every boot, `ironflockos-boot-script.service` puts back a `grub.cfg` that
+  is missing or damaged, from the second path, and finishes what a power cut
+  interrupted. `/run/ironflockos/boot-script` says what the device has
+  (`booted=`, `installed=`, `slot=`, `loader=`, `trial=`, `failed=`, `result=`).
+
+Script versions never go down: after a rollback the newer script stays. So a
+release's slot must boot with the scripts of the releases before it from 0.17.0
+on (`/vmlinuz` and `/initrd.img` at the slot's root, the command line they give),
+and a release's script must boot the slots of the releases before it; the QEMU
+test checks both. The shim, GRUB and MokManager on the partition are still not
+updated.
 
 The Raspberry Pi and Jetson have no GRUB; RAUC switches their slots through a
 `custom` backend, and the device-agent's mark is the health gate there too.
@@ -500,7 +546,7 @@ on `/data` goes. In the root slots
 the reset removes `/apps`, containerd's and NetworkManager's state, root's
 files, the sudo rule and the agent's unit, `/var/lib/ironflockos/enrolled` and the
 accounts the enrollment made, and sets the hostname back to `ironflockos` and the
-machine-id to `uninitialized`; `slot-proven`, `ORDER` and the `_OK` flags of
+machine-id to `uninitialized`; `slot-proven`, the boot scripts with their trial's state, `ORDER` and the `_OK` flags of
 `grubenv` stay. On the EFI targets it also takes `IRONFLOCKOS_RT_CMDLINE` and
 `IRONFLOCKOS_BOOT` out of `grubenv` and removes the device's own splash,
 `splash.cpio` and `splash.env` next to it
@@ -705,7 +751,7 @@ drivers into the initramfs: `build/mkrootfs.sh` puts the theme into the tree
 before it makes the initramfs again, and the build log names the initramfs's
 size.
 
-**The kernel command line.** `grub.cfg` boots with the splash unless
+**The kernel command line.** The boot script boots with the splash unless
 `IRONFLOCKOS_BOOT=text` is in `grubenv`, or `ironflockos.boot=text` in
 `IRONFLOCKOS_CMDLINE`:
 
@@ -900,11 +946,12 @@ that is not locked down; Secure Boot here is no tamper protection
 (ADR-0011). A GRUB password, a firmware password and disk encryption are
 hardening for later.
 
-The splash comes with a new installation only: `grub.cfg` is on the
-IRONFLOCKOS partition, which an update does not write. A device installed
-with 0.16.0 or earlier keeps booting on text after an update to a release
-with the splash; it gets `ironflockos-splash`, which writes an archive its
-`grub.cfg` never loads.
+Up to 0.17.0 the splash came with a new installation only: the boot script
+is on the IRONFLOCKOS partition, which an update does not write. From the
+release after 0.17.0 on, the updated slot brings its boot script there, with
+one trial boot ([ADR-0022](adr/0022-the-os-update-renews-the-boot-script.md),
+"Boot and A/B"), so a device installed with 0.16.0 or earlier gets the splash
+with that update, one boot after the updated slot has proven itself.
 
 **The screen report.** `/usr/lib/ironflockos/screen-report [--app NAME]
 [--screenshot FILE]`, run by hand as root, prints what this boot did on

@@ -137,7 +137,7 @@ The FAT partition is labelled `IRONFLOCKOS` and is where FlockFlasher drops the 
 
 | # | Label | FS | Size | Content |
 |---|-------|----|------|---------|
-| 1 | `IRONFLOCKOS` (ESP) | FAT32 | 256 MiB | shim and Debian's signed GRUB (ADR-0011), `grub.cfg` (RAUC A/B script), `grubenv`, incoming `<device>.flock` |
+| 1 | `IRONFLOCKOS` (ESP) | FAT32 | 256 MiB | shim and Debian's signed GRUB (ADR-0011), the loader `grub.cfg` and the RAUC A/B script `boot.cfg` (ADR-0022), `grubenv`, incoming `<device>.flock` |
 | 2 | `rootfs-a` | ext4 | 4 GiB base, 8 GiB nvidia | Debian root including `/boot/vmlinuz` and initrd |
 | 3 | `rootfs-b` | ext4 | same | empty at flash time |
 | 4 | `data` | ext4 | rest of disk, grown on first boot by `systemd-repart` | everything that must survive an A/B switch |
