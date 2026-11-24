@@ -28,6 +28,7 @@ func release(t *testing.T, version, buildID string, ids ...string) string {
 		must(t, os.MkdirAll(d, 0o755))
 		name := id + "-" + version
 		if strings.HasPrefix(id, "ironflockos-jetson-orin-") {
+			must(t, os.WriteFile(filepath.Join(d, "ironflockos-jetson-flash-kit-"+version+".tar.gz"), []byte("kit"), 0o644))
 			// Jetson: slot A's filesystem image and the bundle, no disk.
 			must(t, os.WriteFile(filepath.Join(d, name+".rootfs.ext4.zst"), []byte("slot image of "+name), 0o644))
 		} else {
@@ -187,7 +188,7 @@ func fileListOf(t *testing.T, dir string) string {
 	for _, p := range matches {
 		base := filepath.Base(p)
 		if !strings.HasSuffix(base, ".img.gz") && !strings.HasSuffix(base, ".raucb") && !strings.HasSuffix(base, ".modules.alias.gz") &&
-			!strings.HasSuffix(base, ".rootfs.ext4.zst") {
+			!strings.HasSuffix(base, ".rootfs.ext4.zst") && !strings.HasSuffix(base, ".tar.gz") {
 			continue
 		}
 		a, err := artifact(p, "")
@@ -629,7 +630,7 @@ func TestAJetsonImage(t *testing.T) {
 	// a release publishes besides: the Agreement and the flash kit).
 	dir = release(t, "1.0.0", "20261120T095512Z-g1a2b3c4", ids...)
 	list := fileListOf(t, dir)
-	extra := fmt.Sprintf("%s\t9\tNVIDIA-LICENSE.txt\n%s\t9\tironflockos-jetson-flash-kit-1.0.0.tar.gz\n", strings.Repeat("a", 64), strings.Repeat("b", 64))
+	extra := fmt.Sprintf("%s\t9\tNVIDIA-LICENSE.txt\n", strings.Repeat("a", 64))
 	data, err = os.ReadFile(list)
 	must(t, err)
 	must(t, os.WriteFile(list, append(data, extra...), 0o644))
@@ -642,8 +643,8 @@ func TestAJetsonImage(t *testing.T) {
 	if !bytes.Equal(a, b) {
 		t.Fatalf("from the list:\n%s\nhashed:\n%s", b, a)
 	}
-	if bytes.Contains(b, []byte("NVIDIA-LICENSE")) || bytes.Contains(b, []byte("flash-kit")) {
-		t.Fatalf("the catalog names images and bundles only: %s", b)
+	if bytes.Contains(b, []byte("NVIDIA-LICENSE")) || j.FlashKit == nil || j.FlashKit.Size != 3 || !strings.HasSuffix(j.FlashKit.URL, "/ironflockos-jetson-flash-kit-1.0.0.tar.gz") {
+		t.Fatalf("incorrect release artifacts: %s", b)
 	}
 
 	// The catalog: valid, and FlockFlasher's boards do not show it.
@@ -658,7 +659,7 @@ func TestAJetsonImage(t *testing.T) {
 	}
 
 	// Without its slot image or its bundle, it is refused.
-	for _, name := range []string{"ironflockos-jetson-orin-base-1.0.0.rootfs.ext4.zst", "ironflockos-jetson-orin-base-1.0.0.raucb"} {
+	for _, name := range []string{"ironflockos-jetson-flash-kit-1.0.0.tar.gz", "ironflockos-jetson-orin-base-1.0.0.rootfs.ext4.zst", "ironflockos-jetson-orin-base-1.0.0.raucb"} {
 		short := FileList{}
 		for k, v := range files {
 			if k != name {

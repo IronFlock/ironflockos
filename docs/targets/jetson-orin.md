@@ -746,6 +746,12 @@ the first such release, take the kit from that artifact, or run
 image, give it the slot image of the `image-jetson-orin-base` artifact with
 `--image` and its line of that artifact's `SHA256SUMS` with `--sha256`.
 
+CLI builds with the Jetson USB wizard list this target in `ironflock os images`.
+On the Ubuntu flashing host, run
+`sudo ironflock os flash -c device.flock --image jetson-orin-base` and follow
+the board, recovery, erase and NVIDIA license prompts. CLI 2.7.0 and earlier
+use the standalone kit steps below.
+
 ### What you need
 
 - A PC with an x86-64 CPU and **Ubuntu 22.04 or 24.04** (the host

@@ -15,8 +15,8 @@
 #    list, the SBOM and SHA256SUMS to <version>/;
 # 2. NVIDIA-LICENSE.txt is the Agreement as bsp.conf pins it;
 # 3. the catalog (tools/catalog, signed with a throwaway key) names the slot
-#    image and the bundle with their hashes, and neither the kit, the
-#    Agreement nor a board for FlockFlasher;
+#    image, bundle and kit with their hashes. The Agreement and FlockFlasher
+#    board list stay outside the Jetson entry;
 # 4. the source mirror: every source package of the image has a place
 #    (Ubuntu's archive or Launchpad, release/sources), NVIDIA's sources go to
 #    ironflockos/sources/l4t-<L4T version>/, and sources (DRY_RUN=1) would
@@ -107,20 +107,22 @@ openssl pkey -in "$work/key.pem" -pubout -out "$work/key.pub" 2>/dev/null
 sha_of() { sha256sum <"$d/$1" | cut -d' ' -f1; }
 jq -e --arg v "$version" --arg id "$id" --arg base "$DL_BASE/ironflockos/$version" \
   --arg slot "$name.rootfs.ext4.zst" --arg slot_sha "$(sha_of "$name.rootfs.ext4.zst")" \
+  --arg kit "ironflockos-jetson-flash-kit-$version.tar.gz" --arg kit_sha "$(sha_of "ironflockos-jetson-flash-kit-$version.tar.gz")" \
   --arg bundle "$name.raucb" --arg bundle_sha "$(sha_of "$name.raucb")" '
   .releases[$v].images[$id] as $i
   | $i.target == "jetson-orin" and $i.architecture == "arm64"
   and $i.image.url == "\($base)/\($slot)" and $i.image.sha256 == $slot_sha
   and ($i.image | has("raw_size") | not) and ($i | has("modules_alias") | not)
+  and $i.flash_kit.url == "\($base)/\($kit)" and $i.flash_kit.sha256 == $kit_sha
   and $i.bundle.url == "\($base)/\($bundle)" and $i.bundle.sha256 == $bundle_sha and $i.bundle.compatible == $id
   and ([.boards[].latestImages[].image_id] | index($id) == null)' "$work/payload.json" >/dev/null || {
   jq --arg v "$version" '.releases[$v]' "$work/payload.json" >&2
   die "the catalog does not name the slot image and the bundle as a release must"
 }
-if grep -q -e NVIDIA-LICENSE -e flash-kit "$work/payload.json"; then
-  die "the catalog names the Agreement or the flash kit"
+if grep -q NVIDIA-LICENSE "$work/payload.json"; then
+  die "the catalog names the Agreement"
 fi
-pass "the catalog (signed with a throwaway key, verified) names $name.rootfs.ext4.zst and $name.raucb with their hashes; no board, no kit, no Agreement"
+pass "the catalog (signed with a throwaway key, verified) names $name.rootfs.ext4.zst and $name.raucb and the flash kit with their hashes; no board or Agreement"
 
 # --- 4. the source mirror -----------------------------------------------------
 list=$(find "$work/meta" -maxdepth 1 -name 'sources-*.tsv' | sort)
