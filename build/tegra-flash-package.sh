@@ -139,6 +139,24 @@ rm -f "$tree/etc/resolv.conf"
 cp -L /etc/resolv.conf "$tree/etc/resolv.conf"
 mkdir -p "$tree/opt/nvidia/l4t-packages"
 touch "$tree/opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall"
+# Installing qemu-user-static does not always activate its ARM64 handler.
+# Check in the actual chroot before treating an apt failure as a mirror issue.
+if ! chroot "$tree" apt-get --version >/dev/null; then
+  log "enabling the host's QEMU ARM64 handler for the flash chroot"
+  if [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
+    mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || die "cannot mount binfmt_misc for ARM64 emulation"
+  fi
+  if [ -f /usr/lib/binfmt.d/qemu-aarch64.conf ]; then
+    # Ubuntu 24.04
+    /usr/lib/systemd/systemd-binfmt qemu-aarch64.conf
+  elif [ -f /usr/share/binfmts/qemu-aarch64 ]; then
+    # Ubuntu 22.04
+    update-binfmts --enable qemu-aarch64
+  else
+    die "the host has no QEMU ARM64 handler definition; install qemu-user-static"
+  fi
+  chroot "$tree" apt-get --version >/dev/null || die "cannot execute ARM64 apt-get in the flash chroot after enabling qemu-aarch64"
+fi
 # An archive mirror in the middle of a sync serves an index that does not
 # match its Release file for some minutes: try again before giving up.
 for try in 1 2 3 4 5; do
