@@ -441,9 +441,10 @@ class ScreenWatch:
     def at_24_bits(frame, before):
         """Whether frame is the framebuffer of before (32 bits a pixel: blue,
         green, red and an unused byte, the same in every pixel) shown with 24
-        bits a pixel, at the same size: the same bytes, three to a pixel."""
+        bits a pixel at the same size. A capture during the switch can still
+        show the previous pixels after the last converted framebuffer word."""
         (w, h, px), (bw, bh, bpx) = frame, before
-        if (w, h) != (bw, bh):
+        if (w, h) != (bw, bh) or len(px) < 4:
             return False
         n = w * h * 3
         mem = bytearray(n)
@@ -452,11 +453,18 @@ class ScreenWatch:
         ref = bytearray(pixels * 4)
         ref[0::4], ref[1::4], ref[2::4] = bpx[2:pixels * 3:3], bpx[1:pixels * 3:3], bpx[0:pixels * 3:3]
         ref = ref[:n]
-        unused = mem[3::4]
-        if len(set(unused)) != 1:
+        ref[3::4] = bytes([mem[3]]) * (n // 4)
+        if mem == ref:
+            return True
+        # Up to the switch, every byte must match the 32-bit framebuffer.
+        # After it, every byte must match the previous screen in packed BGR.
+        mismatch = next(i for i, (a, b) in enumerate(zip(mem, ref)) if a != b)
+        boundary = mismatch - mismatch % 4
+        if boundary == 0:
             return False
-        ref[3::4] = unused
-        return mem == ref
+        previous = bytearray(n)
+        previous[0::3], previous[1::3], previous[2::3] = bpx[2::3], bpx[1::3], bpx[0::3]
+        return mem[boundary:] == previous[boundary:]
 
     @classmethod
     def qemu_inactive(cls, frame):
