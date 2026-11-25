@@ -377,8 +377,9 @@ With the switch on:
   repository.
 - The catalog names the Jetson image by its slot image and its bundle
   (`image` is `<image-id>-<version>.rootfs.ext4.zst`, without `raw_size`,
-  `min_disk_size` and `modules_alias`, and `bundle`), and not the kit or the
-  Agreement. The device-agent reads only its own image's bundle; the flash
+  `min_disk_size` and `modules_alias`, and `bundle`). New catalogs also
+  authenticate the host flash kit with its URL, size and SHA-256 in `flash_kit`.
+  The device-agent reads only its own image's bundle; the flash
   kit takes the slot image's hash from the signed catalog; `ironflock os
   install` and `ironflock os update` (ironflock-cli 2.2) skip an image that
   is no `.img.gz`, so they neither offer it nor update a Jetson device;

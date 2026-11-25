@@ -63,6 +63,7 @@ type Image struct {
 	// hardware_list), which `ironflock os install` matches a machine's disk
 	// controller and network card against. Releases up to 0.14.0 have none.
 	ModulesAlias *Artifact `json:"modules_alias,omitempty"`
+	FlashKit     *Artifact `json:"flash_kit,omitempty"`
 }
 
 type Release struct {
@@ -309,7 +310,17 @@ func buildRelease(dir, repo, version, baseURL, minAgent string, files FileList) 
 			return Release{}, fmt.Errorf("%s has no image (%s%s)", id, name, suffix)
 		}
 		img.Image.Artifact = a
-		if !slot {
+		if slot {
+			kitName := "ironflockos-jetson-flash-kit-" + version + ".tar.gz"
+			kit, ok, err := artifactOf(files, filepath.Join(dir, id), kitName, baseURL+"/"+kitName)
+			if err != nil {
+				return Release{}, err
+			}
+			if !ok {
+				return Release{}, fmt.Errorf("%s is missing", kitName)
+			}
+			img.FlashKit = &kit
+		} else {
 			img.Image.RawSize, img.Image.MinDiskSize, err = diskSizes(filepath.Join(dir, id, name+".sizes"))
 			if err != nil {
 				return Release{}, fmt.Errorf("%s: %w", id, err)
@@ -524,7 +535,7 @@ func (c Catalog) Validate() error {
 			if !imageIDRe.MatchString(id) {
 				errs = append(errs, fmt.Errorf("%s: not an image id", id))
 			}
-			for _, a := range []*Artifact{&img.Image.Artifact, bundleArtifact(img.Bundle), img.ModulesAlias} {
+			for _, a := range []*Artifact{&img.Image.Artifact, bundleArtifact(img.Bundle), img.ModulesAlias, img.FlashKit} {
 				if a == nil {
 					continue
 				}
@@ -553,6 +564,9 @@ func (c Catalog) Validate() error {
 			}
 			if img.Bundle != nil && (img.Bundle.Compatible != id || !strings.HasSuffix(img.Bundle.URL, "/"+id+"-"+v+".raucb")) {
 				errs = append(errs, fmt.Errorf("%s %s: the bundle is not %s-%s.raucb, compatible %s", v, id, id, v, id))
+			}
+			if img.FlashKit != nil && (!isSlotImage(img.Image.URL) || img.Target != "jetson-orin" || !strings.HasSuffix(img.FlashKit.URL, "/ironflockos-jetson-flash-kit-"+v+".tar.gz")) {
+				errs = append(errs, fmt.Errorf("%s %s: invalid Jetson flash kit", v, id))
 			}
 			if img.ModulesAlias != nil && !strings.HasSuffix(img.ModulesAlias.URL, "/"+id+"-"+v+".modules.alias.gz") {
 				errs = append(errs, fmt.Errorf("%s %s: the hardware list is not %s-%s.modules.alias.gz", v, id, id, v))
